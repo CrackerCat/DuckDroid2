@@ -7,8 +7,29 @@
 namespace duckemu::runtime::svc
 {
 
+inline constexpr uint32_t kSysGetcwd = 17;
 inline constexpr uint32_t kSysOpenat = 56;
 inline constexpr uint32_t kSysClose = 57;
+inline constexpr uint32_t kSysClockGettime = 113;
+inline constexpr uint32_t kSysSchedSetaffinity = 122;
+inline constexpr uint32_t kSysSchedGetaffinity = 123;
+inline constexpr uint32_t kSysSchedYield = 124;
+inline constexpr uint32_t kSysSigaltstack = 132;
+inline constexpr uint32_t kSysRtSigaction = 134;
+inline constexpr uint32_t kSysRtSigprocmask = 135;
+inline constexpr uint32_t kSysUname = 160;
+inline constexpr uint32_t kSysGetrlimit = 163;
+inline constexpr uint32_t kSysGettimeofday = 169;
+inline constexpr uint32_t kSysGetppid = 173;
+inline constexpr uint32_t kSysGetuid = 174;
+inline constexpr uint32_t kSysGeteuid = 175;
+inline constexpr uint32_t kSysGetgid = 176;
+inline constexpr uint32_t kSysGetegid = 177;
+inline constexpr uint32_t kSysPrctl = 167;
+inline constexpr uint32_t kSysPrlimit64 = 261;
+inline constexpr uint32_t kSysSetRobustList = 273;
+inline constexpr uint32_t kSysGetrandom = 278;
+inline constexpr uint32_t kSysMembarrier = 283;
 inline constexpr uint32_t kSysRead = 63;
 inline constexpr uint32_t kSysWrite = 64;
 inline constexpr uint32_t kSysExit = 93;
