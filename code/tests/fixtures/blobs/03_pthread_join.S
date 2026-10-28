@@ -50,15 +50,16 @@ loop:
     str x24, [x24, #8]         // pthread_internal_t* (minimal TCB)
     str x24, [x19, #0x50]      // what the child's tpidr must equal
 
-    // clone(flags, stack_top, &tid, &tid, tls)
+    // clone(flags, stack_top, &tid, tls, &tid)
+    //   arm64 is CONFIG_CLONE_BACKWARDS: x3 = tls, x4 = child_tid.
     //   CLONE_VM|FS|FILES|SIGHAND|THREAD|SYSVSEM|SETTLS|PARENT_SETTID|
     //   CHILD_CLEARTID = 0x3d0f00
     movz x0, #0x0f00
     movk x0, #0x3d, lsl #16
     mov x1, x27
     mov x2, x25
-    mov x3, x25
-    mov x4, x24
+    mov x3, x24
+    mov x4, x25
     mov x8, #220
     svc #0
     cbnz x0, parent

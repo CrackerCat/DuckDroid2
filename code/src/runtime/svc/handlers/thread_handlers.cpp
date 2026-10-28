@@ -23,8 +23,9 @@ int64_t sysClone(SyscallContext &ctx)
 	request.flags = ctx.args[0];
 	request.stack_top = GuestVA{ ctx.args[1] };
 	request.parent_tid = GuestVA{ ctx.args[2] };
-	request.child_tid = GuestVA{ ctx.args[3] };
-	request.tls = GuestVA{ ctx.args[4] };
+	// CONFIG_CLONE_BACKWARDS: tls precedes child_tid on arm64.
+	request.tls = GuestVA{ ctx.args[3] };
+	request.child_tid = GuestVA{ ctx.args[4] };
 	return ctx.threads.cloneThread(ctx.thread, request);
 }
 

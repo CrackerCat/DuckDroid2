@@ -9,8 +9,10 @@ namespace duckemu::runtime::threads
 
 class RuntimeThread;
 
-// clone(2) arguments after the dispatcher has read x0..x4. The arm64 kernel
-// order differs from x86: (flags, stack, parent_tid, child_tid, tls).
+// clone(2) arguments after the dispatcher has read x0..x4. arm64 selects
+// CONFIG_CLONE_BACKWARDS, so the kernel order is
+// (flags, stack, parent_tid, tls, child_tid) -- tls is x3, child_tid is x4.
+// bionic's __bionic_clone.S issues the syscall with exactly this order.
 struct CloneRequest
 {
 	uint64_t flags = 0;

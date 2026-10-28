@@ -260,6 +260,29 @@ add_test(NAME 04c_vfs COMMAND 04c_vfs)
 set_tests_properties(04c_vfs PROPERTIES TIMEOUT 120)
 duckemu_set_warnings(04c_vfs)
 
+# M4.6 S2: the light syscall surface, per-call success/errno assertions.
+add_executable(04c_syscalls integration/04c_syscalls.cpp)
+target_link_libraries(04c_syscalls PRIVATE duckemu_runtime duckemu_test_support)
+target_compile_definitions(04c_syscalls PRIVATE
+  DUCKEMU_TRACE_DIR="${CMAKE_CURRENT_BINARY_DIR}/traces"
+  DUCKEMU_ROM_BOOTSTRAP="${DUCKEMU_ROM_BOOTSTRAP}"
+  DUCKEMU_ROM_LIB64="${DUCKEMU_ROM_LIB64}")
+add_test(NAME 04c_syscalls COMMAND 04c_syscalls)
+set_tests_properties(04c_syscalls PROPERTIES TIMEOUT 60)
+duckemu_set_warnings(04c_syscalls)
+
+# M4.6 S5: real bionic pthread_create/join with per-thread errno.
+add_executable(04c_bionic integration/04c_bionic.cpp)
+target_link_libraries(04c_bionic PRIVATE duckemu_runtime duckemu_test_support)
+target_compile_definitions(04c_bionic PRIVATE
+  DUCKEMU_TRACE_DIR="${CMAKE_CURRENT_BINARY_DIR}/traces"
+  DUCKEMU_ROM_BOOTSTRAP="${DUCKEMU_ROM_BOOTSTRAP}"
+  DUCKEMU_ROM_LIB64="${DUCKEMU_ROM_LIB64}"
+  DUCKEMU_LIBELEVEN_SO="${DUCKEMU_ANDROID_ENV_ROOT}/DuckEmu/user_code/libeleven_run/libeleven.so")
+add_test(NAME 04c_bionic COMMAND 04c_bionic)
+set_tests_properties(04c_bionic PROPERTIES TIMEOUT 120)
+duckemu_set_warnings(04c_bionic)
+
 add_executable(elf_image_test unit/runtime/loader/elf_image_test.cpp)
 target_link_libraries(elf_image_test PRIVATE duckemu_runtime duckemu_test_support)
 target_compile_definitions(elf_image_test PRIVATE

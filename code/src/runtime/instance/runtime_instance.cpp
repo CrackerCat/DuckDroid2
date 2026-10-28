@@ -298,8 +298,8 @@ Result<uint64_t> RuntimeInstance::loadLibrary(std::string_view path)
 
 	// preinit reads StaticTlsLayout through __libc_shared_globals; publish the
 	// loader's final layout before any constructor runs.
-	impl_->bionic_globals->setStaticTlsLayout(impl_->modules->tlsLayout().size(),
-		16,
+	impl_->bionic_globals->setStaticTlsLayout(impl_->modules->tlsLayout().paddedSize(),
+		impl_->modules->tlsLayout().alignment(),
 		0,
 		impl_->tls->bionicTlsOffset());
 

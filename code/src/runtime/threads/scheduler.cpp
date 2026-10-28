@@ -462,6 +462,15 @@ void ThreadScheduler::handleRunOutcome(RuntimeThread &thread, const Result<RunOu
 	const RunOutcome &value = outcome.value();
 	thread.next_pc = GuestVA{ value.pc };
 
+	// libc owns the thread pointer: __libc_init_main_thread_final and each
+	// pthread_create switch it with __set_tls (a plain TPIDR_EL0 write, no
+	// syscall). Track the engine's value so the next host-initiated call does
+	// not restore a stale TLS block.
+	if (auto tp = thread.engine->readRegister(UC_ARM64_REG_TPIDR_EL0); tp.ok())
+	{
+		thread.tls_tp = tp.value();
+	}
+
 	// A handler may have blocked or exited the thread from inside the hook.
 	if (thread.state != ThreadState::Executing)
 	{

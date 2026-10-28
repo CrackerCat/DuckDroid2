@@ -51,6 +51,7 @@ class TlsLayout
 		}
 
 		cursor_ = block_offset + size;
+		max_alignment_ = align > max_alignment_ ? align : max_alignment_;
 		return static_cast<int64_t>(block_offset) - static_cast<int64_t>(kThreadPointerOffset);
 	}
 
@@ -59,8 +60,23 @@ class TlsLayout
 		return cursor_;
 	}
 
+	// What libc publishes as StaticTlsLayout::size(): bionic rounds the total
+	// up to the layout alignment so that the block start stays aligned (and the
+	// thread pointer, +16, with it).
+	[[nodiscard]] uint64_t paddedSize() const
+	{
+		return alignUp(cursor_, max_alignment_);
+	}
+
+	[[nodiscard]] uint64_t alignment() const
+	{
+		return max_alignment_;
+	}
+
     private:
 	uint64_t cursor_ = kModulesBase;
+	// bionic_tcb is 16-byte aligned, so the layout starts at 16.
+	uint64_t max_alignment_ = 16;
 };
 
 } // namespace duckemu::runtime::loader
