@@ -29,6 +29,8 @@ class EventBus;
 namespace duckemu::runtime::loader
 {
 
+class BionicGlobals;
+
 // A constructor that still has to run. Dependencies come before dependants.
 struct Initializer
 {
@@ -84,6 +86,11 @@ class ModuleLoader
 	[[nodiscard]] const TlsLayout &tlsLayout() const
 	{
 		return tls_layout_;
+	}
+
+	void setBionicGlobals(BionicGlobals *globals)
+	{
+		virtuals_.setBionicGlobals(globals);
 	}
 
     private:

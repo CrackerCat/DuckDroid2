@@ -17,6 +17,8 @@ class RuntimeMemory;
 namespace duckemu::runtime::loader
 {
 
+class BionicGlobals;
+
 // Host implementations behind the virtual modules. Production only virtualizes
 // what a real Android linker provides (ld-android.so); the modules that real
 // bionic supplies from disk (libc/libm/libdl/liblog/...) are loaded from files.
@@ -44,6 +46,12 @@ class VirtualBionic
 	// Creates (once) the thunk that implements `symbol`.
 	Result<GuestVA> resolve(std::string_view symbol);
 
+	// Lets __loader_shared_globals return the guest libc_shared_globals block.
+	void setBionicGlobals(BionicGlobals *globals)
+	{
+		bionic_globals_ = globals;
+	}
+
 	// Diagnostics: how many symbols were served.
 	[[nodiscard]] size_t resolvedCount() const
 	{
@@ -54,6 +62,7 @@ class VirtualBionic
 	RuntimeMemory &memory_;
 	ThunkTable &thunks_;
 	bool test_stubs_;
+	BionicGlobals *bionic_globals_ = nullptr;
 	std::vector<std::pair<std::string, GuestVA> > thunks_by_name_;
 
 	Result<HostStub> makeStub(std::string_view symbol);

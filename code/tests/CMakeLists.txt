@@ -207,6 +207,7 @@ set(DUCKEMU_ROM_LIB64
 set(DUCKEMU_SGMAIN_SO
     "${DUCKEMU_ANDROID_ENV_ROOT}/DuckDroid/code/user_code/DaMai/ida/libsgmainso-6.8.260704.so"
     CACHE FILEPATH "libsgmainso sample with damaged section headers")
+set(DUCKEMU_ROM_BOOTSTRAP "${DUCKEMU_ROM_LIB64}/bootstrap")
 
 add_executable(04b_libc_map integration/04b_libc_map.cpp)
 target_link_libraries(04b_libc_map PRIVATE duckemu_runtime duckemu_test_support)
@@ -219,6 +220,18 @@ target_compile_definitions(04b_libc_map PRIVATE
 add_test(NAME 04b_libc_map COMMAND 04b_libc_map)
 set_tests_properties(04b_libc_map PROPERTIES TIMEOUT 120)
 duckemu_set_warnings(04b_libc_map)
+
+# M4.6 S1: libc_shared_globals + auxv, exercised through the ROM libc's
+# getauxval. Initializers stay off: preinit is a later step.
+add_executable(04c_globals integration/04c_globals.cpp)
+target_link_libraries(04c_globals PRIVATE duckemu_runtime duckemu_test_support)
+target_compile_definitions(04c_globals PRIVATE
+  DUCKEMU_TRACE_DIR="${CMAKE_CURRENT_BINARY_DIR}/traces"
+  DUCKEMU_ROM_BOOTSTRAP="${DUCKEMU_ROM_BOOTSTRAP}"
+  DUCKEMU_ROM_LIB64="${DUCKEMU_ROM_LIB64}")
+add_test(NAME 04c_globals COMMAND 04c_globals)
+set_tests_properties(04c_globals PROPERTIES TIMEOUT 60)
+duckemu_set_warnings(04c_globals)
 
 add_executable(elf_image_test unit/runtime/loader/elf_image_test.cpp)
 target_link_libraries(elf_image_test PRIVATE duckemu_runtime duckemu_test_support)

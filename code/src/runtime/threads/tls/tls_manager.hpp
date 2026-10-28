@@ -54,6 +54,11 @@ class TlsManager
 		return main_.region_base;
 	}
 
+	[[nodiscard]] uint64_t bionicTlsOffset() const
+	{
+		return main_.bionic_tls.value() - main_.region_base.value();
+	}
+
     private:
 	static uint64_t makeStackGuard();
 

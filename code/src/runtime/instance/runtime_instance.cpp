@@ -3,6 +3,7 @@
 #include <utility>
 
 #include "runtime/backend/unicorn/unicorn_backend.hpp"
+#include "runtime/loader/bionic/shared_globals.hpp"
 #include "runtime/loader/module_loader.hpp"
 #include "runtime/memory/address_space.hpp"
 #include "runtime/observer/trace/svc_trace.hpp"
@@ -34,6 +35,7 @@ struct RuntimeInstance::Impl
 	std::unique_ptr<observer::EventBus> events;
 	std::unique_ptr<UnicornBackend> backend;
 	std::unique_ptr<ThunkTable> thunks;
+	std::unique_ptr<loader::BionicGlobals> bionic_globals;
 	std::unique_ptr<loader::ModuleLoader> modules;
 	std::unique_ptr<tls::TlsManager> tls;
 	// Co-owned with the bus listener that writes to it: the listener captures
@@ -110,11 +112,22 @@ Result<std::unique_ptr<RuntimeInstance> > RuntimeInstance::create(const RuntimeC
 	}
 	impl->thunks = std::move(thunks).value();
 
+	loader::BionicGlobalsConfig globals_config;
+	globals_config.pid = config.pid;
+	globals_config.progname = "duckemu";
+	globals_config.environment = { "ANDROID_ROOT=/system", "ANDROID_DATA=/data" };
+	impl->bionic_globals =
+		std::make_unique<loader::BionicGlobals>(impl->memory, std::move(globals_config));
+	if (auto initialized = impl->bionic_globals->initialize(); !initialized.ok()) {
+		return initialized.error();
+	}
+
 	impl->modules = std::make_unique<loader::ModuleLoader>(impl->memory,
 		*impl->thunks,
 		impl->events.get(),
 		config.library_search_paths,
 		config.enable_test_import_stubs);
+	impl->modules->setBionicGlobals(impl->bionic_globals.get());
 
 	impl->tls = std::make_unique<tls::TlsManager>(impl->memory);
 	auto tls_instance = impl->tls->create(config.tid, config.pid, impl->stack_top);
@@ -251,6 +264,13 @@ Result<uint64_t> RuntimeInstance::loadLibrary(std::string_view path)
 			return written.error();
 		}
 	}
+
+	// preinit reads StaticTlsLayout through __libc_shared_globals; publish the
+	// loader's final layout before any constructor runs.
+	impl_->bionic_globals->setStaticTlsLayout(impl_->modules->tlsLayout().size(),
+		16,
+		0,
+		impl_->tls->bionicTlsOffset());
 
 	const std::vector<loader::Initializer> initializers = impl_->modules->takeInitializers();
 	if (!impl_->config.run_module_initializers)

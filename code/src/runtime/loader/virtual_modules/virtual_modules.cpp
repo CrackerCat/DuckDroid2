@@ -8,6 +8,7 @@
 
 #include <unistd.h>
 
+#include "runtime/loader/bionic/shared_globals.hpp"
 #include "runtime/memory/address_space.hpp"
 #include "runtime/threads/tls/tls_layout_android13.hpp"
 
@@ -164,8 +165,18 @@ GuestVA errnoAddress(RuntimeMemory &memory, uint64_t thread_pointer)
 
 Result<HostStub> VirtualBionic::makeStub(std::string_view symbol)
 {
-	// ld-android.so: binding-only stubs. Returning 0 is safe for load; any
-	// symbol that needs real behaviour is picked up in M4.6.
+	// The one linker symbol M4.6 needs for real: libc forwards
+	// __libc_shared_globals() here. The block is prepared by RuntimeInstance.
+	if (symbol == "__loader_shared_globals")
+	{
+		BionicGlobals *globals = bionic_globals_;
+		return HostStub{ [globals](HostCallArgs &) -> int64_t {
+			return globals != nullptr ? static_cast<int64_t>(globals->address().value()) : 0;
+		} };
+	}
+
+	// ld-android.so: binding-only stubs. Returning 0 is safe for load; every
+	// other symbol that needs real behaviour is picked up later in M4.6.
 	if (matchesAny(kLinkerEntries, std::size(kLinkerEntries), symbol))
 	{
 		return HostStub{ [](HostCallArgs &) -> int64_t { return 0; } };

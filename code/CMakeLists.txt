@@ -67,6 +67,7 @@ duckemu_set_warnings(duckemu_common)
 
 add_library(duckemu_runtime STATIC
   src/runtime/instance/runtime_instance.cpp
+  src/runtime/loader/bionic/shared_globals.cpp
   src/runtime/loader/elf/elf_image.cpp
   src/runtime/loader/module_loader.cpp
   src/runtime/loader/module_registry.cpp
