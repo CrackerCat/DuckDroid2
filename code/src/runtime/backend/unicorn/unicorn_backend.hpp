@@ -7,6 +7,7 @@
 
 #include "common/error/result.hpp"
 #include "runtime/memory/code_notifier.hpp"
+#include "runtime/observer/diagnostic/diagnostic_event.hpp"
 
 namespace duckemu::runtime
 {
@@ -39,6 +40,12 @@ class UnicornBackend final : public MapObserver, public CodeWriteNotifier
 
 	void setSvcTrapHandler(std::function<void(uc_engine *, uint32_t)> handler);
 
+	// Installs the diagnostic memory-access hook (reads and writes). The sink
+	// is invoked on the emulating thread and must not re-enter the engine.
+	// Passing an empty function disables the hook's data path; M2 installs it
+	// once, before the first run.
+	void setDiagnosticSink(std::function<void(const observer::DiagnosticEvent &)> sink);
+
 	Result<RunOutcome> run(GuestVA begin, GuestVA until, uint64_t timeout_us);
 	void stop();
 
@@ -61,12 +68,16 @@ class UnicornBackend final : public MapObserver, public CodeWriteNotifier
 	static void onIntr(uc_engine *uc, uint32_t intno, void *user_data);
 	static bool
 	onMemWrite(uc_engine *uc, uc_mem_type type, uint64_t address, int size, int64_t value, void *user_data);
+	static bool
+	onDiagnosticAccess(uc_engine *uc, uc_mem_type type, uint64_t address, int size, int64_t value, void *user_data);
 
 	uc_engine *engine_ = nullptr;
 	RuntimeMemory &memory_;
 	std::function<void(uc_engine *, uint32_t)> svc_handler_;
+	std::function<void(const observer::DiagnosticEvent &)> diagnostic_sink_;
 	uc_hook intr_hook_ = 0;
 	uc_hook mem_write_hook_ = 0;
+	uc_hook diagnostic_hook_ = 0;
 };
 
 } // namespace duckemu::runtime

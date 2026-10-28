@@ -177,43 +177,4 @@ void UnicornBackend::onCodeWritten(GuestVA address, uint64_t size)
 	invalidateCode(address, size);
 }
 
-void UnicornBackend::onIntr(uc_engine *uc, uint32_t intno, void *user_data)
-{
-	auto *backend = static_cast<UnicornBackend *>(user_data);
-	if (backend->svc_handler_) {
-		backend->svc_handler_(uc, intno);
-		return;
-	}
-	DUCKEMU_ERROR("UC_HOOK_INTR (intno=%u) without a handler; stopping", intno);
-	uc_emu_stop(uc);
-}
-
-bool UnicornBackend::onMemWrite(uc_engine *uc,
-	uc_mem_type type,
-	uint64_t address,
-	int size,
-	int64_t value,
-	void *user_data)
-{
-	(void)uc;
-	(void)type;
-	(void)value;
-	auto *backend = static_cast<UnicornBackend *>(user_data);
-	if (size <= 0) {
-		return true;
-	}
-
-	const uint64_t first_page = pageDown(address);
-	const uint64_t last_page = pageDown(address + static_cast<uint64_t>(size) - 1);
-	for (uint64_t page = first_page;; page += kGuestPageSize) {
-		if (backend->memory_.isExecutable(GuestVA{ page })) {
-			backend->invalidateCode(GuestVA{ page }, kGuestPageSize);
-		}
-		if (page >= last_page) {
-			break;
-		}
-	}
-	return true;
-}
-
 } // namespace duckemu::runtime

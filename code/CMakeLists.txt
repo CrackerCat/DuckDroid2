@@ -70,8 +70,13 @@ add_library(duckemu_runtime STATIC
   src/runtime/memory/address_space.cpp
   src/runtime/memory/thunk/thunk_table.cpp
   src/runtime/backend/unicorn/unicorn_backend.cpp
+  src/runtime/backend/unicorn/unicorn_hooks.cpp
+  src/runtime/observer/event_bus.cpp
+  src/runtime/observer/diagnostic/guest_stack.cpp
+  src/runtime/observer/trace/svc_trace.cpp
   src/runtime/threads/tls/tls_manager.cpp
   src/runtime/svc/dispatcher.cpp
+  src/runtime/svc/syscall_names.cpp
   src/runtime/svc/handlers/memory_handlers.cpp
   src/runtime/svc/handlers/fs_handlers.cpp
   src/runtime/svc/handlers/misc_handlers.cpp
@@ -92,6 +97,11 @@ target_link_libraries(unicorn_spike PRIVATE
   Threads::Threads
 )
 duckemu_set_warnings(unicorn_spike)
+
+# Reads svc.log produced by any RuntimeInstance (M2).
+add_executable(trace_viewer tools/trace_viewer/main.cpp)
+target_link_libraries(trace_viewer PRIVATE duckemu_runtime)
+duckemu_set_warnings(trace_viewer)
 
 if(DUCKEMU_BUILD_TESTS)
   enable_testing()

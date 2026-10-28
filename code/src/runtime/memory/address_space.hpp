@@ -13,6 +13,11 @@
 namespace duckemu::runtime
 {
 
+namespace observer
+{
+class EventBus;
+}
+
 // Single authority over the guest address space.
 //
 // M1 is single-threaded; no locking yet. M3 adds the instance-level lock.
@@ -57,6 +62,12 @@ class RuntimeMemory
 	{
 		notifier_ = notifier;
 	}
+	// Optional observation sink: every successful public map/unmap/protect/brk
+	// is published as a MemoryEvent. Internal splits do not publish.
+	void setEventBus(observer::EventBus *bus)
+	{
+		event_bus_ = bus;
+	}
 
 	// Minimal brk(): a fixed 1 MiB heap, mapped lazily.
 	Result<GuestVA> brk(GuestVA new_brk);
@@ -79,6 +90,7 @@ class RuntimeMemory
 	RegionMap regions_;
 	uint64_t next_free_ = 0x40000000; MapObserver *observer_ = nullptr;
 	CodeWriteNotifier *notifier_ = nullptr;
+	observer::EventBus *event_bus_ = nullptr;
 
 	static constexpr uint64_t kHeapBase = 0x30000000; static constexpr uint64_t
 		kHeapSize = 0x100000; uint64_t brk_base_ = 0;

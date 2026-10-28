@@ -32,9 +32,12 @@ duckemu_guest_blob(BLOB_PURE_NATIVE
   "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/blobs/02_pure_native.S")
 duckemu_guest_blob(BLOB_EXIT_GROUP
   "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/blobs/02_exit_group.S")
+duckemu_guest_blob(BLOB_STACK_DUMP
+  "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/blobs/02_stack_dump.S")
 
 add_custom_target(guest_blobs ALL
-  DEPENDS ${BLOB_TLS_READ} ${BLOB_PURE_NATIVE} ${BLOB_EXIT_GROUP})
+  DEPENDS ${BLOB_TLS_READ} ${BLOB_PURE_NATIVE} ${BLOB_EXIT_GROUP}
+          ${BLOB_STACK_DUMP})
 
 # ---------------------------------------------------------------------------
 # Test support
@@ -50,6 +53,8 @@ duckemu_set_warnings(duckemu_test_support)
 function(duckemu_add_integration_test name)
   add_executable(${name} "integration/${name}.cpp")
   target_link_libraries(${name} PRIVATE duckemu_runtime duckemu_test_support)
+  target_compile_definitions(${name} PRIVATE
+    DUCKEMU_TRACE_DIR="${CMAKE_CURRENT_BINARY_DIR}/traces")
   add_dependencies(${name} guest_blobs)
   add_test(NAME ${name} COMMAND ${name})
   duckemu_set_warnings(${name})
@@ -57,6 +62,7 @@ endfunction()
 
 duckemu_add_integration_test(01_tls_read)
 duckemu_add_integration_test(02_pure_native)
+duckemu_add_integration_test(02_stack_dump)
 
 # ---------------------------------------------------------------------------
 # Unit tests
@@ -67,3 +73,18 @@ target_link_libraries(runtime_memory_test PRIVATE
   duckemu_test_support)
 add_test(NAME runtime_memory_test COMMAND runtime_memory_test)
 duckemu_set_warnings(runtime_memory_test)
+
+add_executable(ring_buffer_test unit/runtime/ring_buffer_test.cpp)
+target_link_libraries(ring_buffer_test PRIVATE duckemu_runtime duckemu_test_support)
+add_test(NAME ring_buffer_test COMMAND ring_buffer_test)
+duckemu_set_warnings(ring_buffer_test)
+
+add_executable(guest_stack_test unit/runtime/guest_stack_test.cpp)
+target_link_libraries(guest_stack_test PRIVATE duckemu_runtime duckemu_test_support)
+add_test(NAME guest_stack_test COMMAND guest_stack_test)
+duckemu_set_warnings(guest_stack_test)
+
+add_executable(svc_trace_format_test unit/observer/svc_trace_format_test.cpp)
+target_link_libraries(svc_trace_format_test PRIVATE duckemu_runtime duckemu_test_support)
+add_test(NAME svc_trace_format_test COMMAND svc_trace_format_test)
+duckemu_set_warnings(svc_trace_format_test)

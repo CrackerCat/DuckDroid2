@@ -4,6 +4,7 @@
 
 #include "runtime/backend/unicorn/unicorn_backend.hpp"
 #include "runtime/memory/address_space.hpp"
+#include "runtime/observer/trace/svc_trace.hpp"
 #include "runtime/svc/dispatcher.hpp"
 #include "runtime/threads/tls/tls_manager.hpp"
 
@@ -45,10 +46,17 @@ struct RuntimeInstance::Impl
 
 	RuntimeConfig config;
 	RuntimeMemory memory;
+	std::unique_ptr<observer::EventBus> events;
 	std::unique_ptr<UnicornBackend> backend;
 	std::unique_ptr<ThunkTable> thunks;
 	std::unique_ptr<tls::TlsManager> tls;
 	std::unique_ptr<svc::SvcDispatcher> dispatcher;
+	// Co-owned with the bus listener that writes to it: the listener captures
+	// a shared_ptr, so the file outlives any Impl member regardless of
+	// destruction order. A raw pointer (one owner + one observer) would make
+	// correctness depend on "trace is declared last", which no compiler checks
+	// and which M3 would make much harder to reason about.
+	std::shared_ptr<observer::SvcTraceFile> trace;
 
 	GuestVA stack_base;
 	uint64_t stack_top = 0;
@@ -67,6 +75,9 @@ Result<std::unique_ptr<RuntimeInstance> > RuntimeInstance::create(const RuntimeC
 {
 	auto impl = std::make_unique<Impl>();
 	impl->config = config;
+
+	impl->events = std::make_unique<observer::EventBus>(config.diagnostic_capacity);
+	impl->memory.setEventBus(impl->events.get());
 
 	auto backend = UnicornBackend::create(impl->memory);
 	if (!backend.ok()) {
@@ -97,7 +108,8 @@ Result<std::unique_ptr<RuntimeInstance> > RuntimeInstance::create(const RuntimeC
 		return tls_instance.error();
 	}
 
-	impl->dispatcher = std::make_unique<svc::SvcDispatcher>(impl->memory, *impl->thunks, config.pid, config.tid);
+	impl->dispatcher = std::make_unique<svc::SvcDispatcher>(
+		impl->memory, *impl->thunks, *impl->events, config.pid, config.tid);
 	impl->backend->setSvcTrapHandler([dispatcher = impl->dispatcher.get()](uc_engine *uc, uint32_t intno) {
 		dispatcher->onTrap(uc, intno);
 	});
@@ -110,6 +122,26 @@ Result<std::unique_ptr<RuntimeInstance> > RuntimeInstance::create(const RuntimeC
 	if (auto written = impl->memory.write(impl->return_trap, &kBranchToSelf, sizeof(kBranchToSelf));
 		!written.ok()) {
 		return written.error();
+	}
+
+	if (!config.trace_path.empty()) {
+		auto trace = observer::SvcTraceFile::open(config.trace_path);
+		if (!trace.ok()) {
+			return trace.error();
+		}
+		impl->trace = std::shared_ptr<observer::SvcTraceFile>(std::move(trace).value());
+		impl->events->addSvcListener([writer = impl->trace](const observer::SvcEvent &event) {
+			writer->write(event);
+		});
+	}
+
+	if (config.record_memory_access) {
+		impl->backend->setDiagnosticSink(
+			[bus = impl->events.get(), tid = config.tid](const observer::DiagnosticEvent &source) {
+				observer::DiagnosticEvent event = source;
+				event.tid = tid;
+				(void)bus->diagnostics().tryPush(event);
+			});
 	}
 
 	impl->state = Impl::State::Ready;
@@ -138,6 +170,14 @@ Result<GuestVA> RuntimeInstance::registerHostFunction(std::string_view name, Hos
 
 Result<RuntimeInstance::CallResult> RuntimeInstance::callFunction(GuestVA entry, const std::array<uint64_t, 8> &args)
 {
+	// Listeners run inside the Unicorn hook. Starting the engine from one
+	// nests uc_emu_start on the same engine, which overwrites the outer PC/GPR
+	// (M0 probe 6). Refuse instead of corrupting state silently.
+	if (impl_->events->delivering()) {
+		return Error{ ErrorCode::InvalidArgument,
+			"callFunction from an event listener would re-enter the emulator" };
+	}
+
 	if (impl_->state != Impl::State::Ready) {
 		return Error{ ErrorCode::InvalidArgument, "RuntimeInstance is not ready to execute" };
 	}
@@ -151,6 +191,12 @@ Result<RuntimeInstance::CallResult> RuntimeInstance::callFunction(GuestVA entry,
 	auto lr = impl_->backend->writeRegister(UC_ARM64_REG_X30, impl_->return_trap.value());
 	if (!lr.ok()) {
 		return lr.error();
+	}
+	// Terminates the guest frame chain: the unwinder stops at fp == 0 instead
+	// of reading whatever the previous run left in x29.
+	auto fp = impl_->backend->writeRegister(UC_ARM64_REG_X29, 0);
+	if (!fp.ok()) {
+		return fp.error();
 	}
 	auto tp = impl_->backend->writeRegister(UC_ARM64_REG_TPIDR_EL0, impl_->tls->threadPointer().value());
 	if (!tp.ok()) {
@@ -196,6 +242,42 @@ Result<RuntimeInstance::CallResult> RuntimeInstance::callFunction(GuestVA entry,
 	CallResult result;
 	result.return_value = return_value.value();
 	return result;
+}
+
+uint32_t RuntimeInstance::addSvcListener(observer::EventBus::SvcListener listener)
+{
+	return impl_->events->addSvcListener(std::move(listener));
+}
+
+uint32_t RuntimeInstance::addMemoryListener(observer::EventBus::MemoryListener listener)
+{
+	return impl_->events->addMemoryListener(std::move(listener));
+}
+
+bool RuntimeInstance::removeSvcListener(uint32_t id)
+{
+	return impl_->events->removeSvcListener(id);
+}
+
+bool RuntimeInstance::removeMemoryListener(uint32_t id)
+{
+	return impl_->events->removeMemoryListener(id);
+}
+
+size_t RuntimeInstance::drainDiagnostics(std::vector<observer::DiagnosticEvent> &out)
+{
+	size_t drained = 0;
+	observer::DiagnosticEvent event;
+	while (impl_->events->diagnostics().tryPop(event)) {
+		out.push_back(event);
+		++drained;
+	}
+	return drained;
+}
+
+uint64_t RuntimeInstance::droppedDiagnostics() const
+{
+	return impl_->events->diagnostics().dropped();
 }
 
 } // namespace duckemu::runtime

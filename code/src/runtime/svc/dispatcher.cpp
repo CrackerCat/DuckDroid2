@@ -1,9 +1,16 @@
 #include "runtime/svc/dispatcher.hpp"
 
+#include <cstdio>
 #include <optional>
+#include <string>
+#include <string_view>
+#include <utility>
 
 #include "common/log/logger.hpp"
+#include "runtime/observer/diagnostic/guest_stack.hpp"
+#include "runtime/observer/event_bus.hpp"
 #include "runtime/svc/handler.hpp"
+#include "runtime/svc/syscall_names.hpp"
 #include "runtime/svc/syscall_numbers.hpp"
 
 namespace duckemu::runtime::svc
@@ -16,8 +23,10 @@ constexpr uint32_t kSvcInstruction = 0xD4000001u;
 constexpr uint32_t kHostStubBase = 0x8000u;
 constexpr uint32_t kHostStubIndexMask = 0x7FFFu;
 constexpr uint32_t kIntrSwi = 2;
+constexpr size_t kSyscallArgCount = 6;
+constexpr size_t kHostArgCount = 8;
 
-constexpr int kArgRegs[8] = {
+constexpr int kArgRegs[kHostArgCount] = {
 	UC_ARM64_REG_X0,
 	UC_ARM64_REG_X1,
 	UC_ARM64_REG_X2,
@@ -47,11 +56,35 @@ Result<void> writeRegister(uc_engine *uc, int reg, uint64_t value)
 	return {};
 }
 
+std::string hexString(uint64_t value)
+{
+	char buffer[32];
+	std::snprintf(buffer, sizeof(buffer), "0x%llx", static_cast<unsigned long long>(value));
+	return buffer;
+}
+
+bool readArgRegisters(uc_engine *uc, size_t count, std::array<uint64_t, kHostArgCount> &values)
+{
+	for (size_t i = 0; i < count; ++i) {
+		auto value = readRegister(uc, kArgRegs[i]);
+		if (!value.ok()) {
+			return false;
+		}
+		values[i] = value.value();
+	}
+	return true;
+}
+
 } // namespace
 
-SvcDispatcher::SvcDispatcher(RuntimeMemory &memory, ThunkTable &thunks, uint32_t pid, uint32_t tid)
+SvcDispatcher::SvcDispatcher(RuntimeMemory &memory,
+	ThunkTable &thunks,
+	observer::EventBus &events,
+	uint32_t pid,
+	uint32_t tid)
 	: memory_(memory)
 	, thunks_(thunks)
+	, events_(events)
 	, pid_(pid)
 	, tid_(tid)
 {
@@ -78,7 +111,8 @@ void SvcDispatcher::onTrap(uc_engine *uc, uint32_t intno)
 		return;
 	}
 
-	auto instruction = memory_.readU32(GuestVA{ pc.value() - 4 });
+	const uint64_t svc_address = pc.value() - 4;
+	auto instruction = memory_.readU32(GuestVA{ svc_address });
 	if (!instruction.ok() || (instruction.value() & kSvcInstructionMask) != kSvcInstruction) {
 		DUCKEMU_ERROR("UC_HOOK_INTR at 0x%llx but PC-4 is not an SVC",
 			static_cast<unsigned long long>(pc.value()));
@@ -88,51 +122,83 @@ void SvcDispatcher::onTrap(uc_engine *uc, uint32_t intno)
 
 	const uint32_t imm = (instruction.value() >> 5) & 0xFFFFu;
 
+	observer::SvcEvent event;
+	event.seq = next_seq_++;
+	event.tid = tid_;
+	event.svc_address = svc_address;
+
+	int64_t result = 0;
+	bool stop_after_publish = false;
+
 	if (imm == 0) {
+		event.kind = observer::SvcKind::Syscall;
+
 		auto number = readRegister(uc, UC_ARM64_REG_X8);
-		if (!number.ok()) {
+		std::array<uint64_t, kHostArgCount> raw_args{};
+		if (!number.ok() || !readArgRegisters(uc, kSyscallArgCount, raw_args)) {
 			uc_emu_stop(uc);
 			return;
 		}
-
-		uint64_t args[6] = {};
-		for (size_t i = 0; i < 6; ++i) {
-			auto value = readRegister(uc, kArgRegs[i]);
-			if (!value.ok()) {
-				uc_emu_stop(uc);
-				return;
-			}
-			args[i] = value.value();
+		for (size_t i = 0; i < kSyscallArgCount; ++i) {
+			event.args[i] = raw_args[i];
 		}
 
-		const int64_t result = dispatchSyscall(static_cast<uint32_t>(number.value()), args);
-		if (auto written = writeRegister(uc, UC_ARM64_REG_X0, static_cast<uint64_t>(result)); !written.ok()) {
+		event.number = static_cast<uint32_t>(number.value());
+		const std::string_view name = syscallName(event.number);
+		event.name = name.empty() ? "sys#" + std::to_string(event.number) : std::string(name);
+		result = dispatchSyscall(event.number, event.args, event.supported);
+	} else if ((imm & kHostStubBase) != 0) {
+		event.kind = observer::SvcKind::HostStub;
+		event.number = imm & kHostStubIndexMask;
+
+		const std::string_view name = thunks_.nameOf(event.number);
+		event.name = name.empty() ? "host#" + std::to_string(event.number) : std::string(name);
+
+		std::array<uint64_t, kHostArgCount> raw_args{};
+		if (!readArgRegisters(uc, kHostArgCount, raw_args)) {
 			uc_emu_stop(uc);
 			return;
 		}
-
-		if (exit_requested_) {
-			uc_emu_stop(uc);
+		for (size_t i = 0; i < kSyscallArgCount; ++i) {
+			event.args[i] = raw_args[i];
 		}
+		result = invokeHostStub(event.number, raw_args, event.supported);
+	} else {
+		event.kind = observer::SvcKind::UnknownTrap;
+		event.number = imm;
+		event.name = "trap#" + hexString(imm);
+		event.supported = false;
+		result = kError(kEnosys);
+		stop_after_publish = true;
+	}
+
+	event.result = static_cast<uint64_t>(result);
+
+	if (auto written = writeRegister(uc, UC_ARM64_REG_X0, event.result); !written.ok()) {
+		uc_emu_stop(uc);
 		return;
 	}
 
-	if ((imm & kHostStubBase) != 0) {
-		handleHostStub(uc, imm & kHostStubIndexMask);
-		return;
+	if (!event.supported) {
+		captureStack(uc, event);
+		logUnsupported(event);
 	}
 
-	DUCKEMU_ERROR("unsupported SVC immediate 0x%x at 0x%llx", imm, static_cast<unsigned long long>(pc.value() - 4));
-	uc_emu_stop(uc);
+	event.id = next_id_++;
+	events_.publishSvc(event);
+
+	if (exit_requested_ || stop_after_publish) {
+		uc_emu_stop(uc);
+	}
 }
 
-int64_t SvcDispatcher::dispatchSyscall(uint32_t number, const uint64_t (&args)[6])
+int64_t SvcDispatcher::dispatchSyscall(uint32_t number, const std::array<uint64_t, 6> &args, bool &supported)
 {
 	++stats_.svc_calls;
 	stats_.last_syscall = number;
 
 	SyscallContext ctx{ {}, memory_, pid_, tid_ };
-	for (size_t i = 0; i < 6; ++i) {
+	for (size_t i = 0; i < kSyscallArgCount; ++i) {
 		ctx.args[i] = args[i];
 	}
 
@@ -146,10 +212,11 @@ int64_t SvcDispatcher::dispatchSyscall(uint32_t number, const uint64_t (&args)[6
 
 	int64_t value = 0;
 	if (result.has_value()) {
+		supported = true;
 		value = result.value();
 	} else {
+		supported = false;
 		++stats_.unknown;
-		DUCKEMU_WARN("unimplemented syscall %u (x8), returning -ENOSYS", number);
 		value = kError(kEnosys);
 	}
 
@@ -160,32 +227,63 @@ int64_t SvcDispatcher::dispatchSyscall(uint32_t number, const uint64_t (&args)[6
 	return value;
 }
 
-void SvcDispatcher::handleHostStub(uc_engine *uc, uint32_t index)
+int64_t SvcDispatcher::invokeHostStub(uint32_t index, const std::array<uint64_t, 8> &args, bool &supported)
 {
 	HostCallArgs call;
-	for (size_t i = 0; i < call.x.size(); ++i) {
-		auto value = readRegister(uc, kArgRegs[i]);
-		if (!value.ok()) {
-			uc_emu_stop(uc);
-			return;
-		}
-		call.x[i] = value.value();
-	}
+	call.x = args;
 
 	++stats_.host_calls;
 	auto result = thunks_.invoke(index, call);
 	if (!result.ok()) {
-		DUCKEMU_ERROR("host stub %u is not registered", index);
-		if (auto written = writeRegister(uc, UC_ARM64_REG_X0, static_cast<uint64_t>(kError(kEnosys)));
-			!written.ok()) {
-			uc_emu_stop(uc);
-		}
+		supported = false;
+		return kError(kEnosys);
+	}
+	supported = true;
+	return result.value();
+}
+
+void SvcDispatcher::captureStack(uc_engine *uc, observer::SvcEvent &event) const
+{
+	auto sp = readRegister(uc, UC_ARM64_REG_SP);
+	auto fp = readRegister(uc, UC_ARM64_REG_X29);
+	if (!sp.ok() || !fp.ok()) {
+		event.stack_stop = "cannot read sp/fp";
 		return;
 	}
 
-	if (auto written = writeRegister(uc, UC_ARM64_REG_X0, static_cast<uint64_t>(result.value())); !written.ok()) {
-		uc_emu_stop(uc);
+	auto stack = observer::unwindGuestStack(memory_, event.svc_address, fp.value(), sp.value());
+	event.stack = std::move(stack.frames);
+	event.stack_stop = std::move(stack.stop);
+}
+
+void SvcDispatcher::logUnsupported(const observer::SvcEvent &event) const
+{
+	std::string message = "unsupported ";
+	switch (event.kind) {
+	case observer::SvcKind::Syscall:
+		message += "syscall ";
+		break;
+	case observer::SvcKind::HostStub:
+		message += "host stub ";
+		break;
+	case observer::SvcKind::UnknownTrap:
+		message += "svc immediate ";
+		break;
 	}
+	message += event.name;
+	message += " at ";
+	message += hexString(event.svc_address);
+	if (!event.stack.empty()) {
+		message += "\n    guest stack:";
+		for (const auto &frame : event.stack) {
+			message += "\n    ";
+			message += frame.name;
+		}
+		if (!event.stack_stop.empty()) {
+			message += "\n    (walk stopped: " + event.stack_stop + ")";
+		}
+	}
+	DUCKEMU_WARN("%s", message.c_str());
 }
 
 } // namespace duckemu::runtime::svc

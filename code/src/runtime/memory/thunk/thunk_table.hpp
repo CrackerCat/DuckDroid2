@@ -38,6 +38,12 @@ class ThunkTable
 	Result<GuestVA> add(std::string_view name, HostStub stub);
 	Result<int64_t> invoke(uint32_t index, HostCallArgs &args) const;
 
+	// Empty when the index was never registered.
+	[[nodiscard]] std::string_view nameOf(uint32_t index) const
+	{
+		return index < count_ ? std::string_view(entries_[index].name) : std::string_view{};
+	}
+
 	[[nodiscard]] uint32_t count() const
 	{
 		return count_;

@@ -7,6 +7,8 @@
 
 #include <sys/mman.h>
 
+#include "runtime/observer/event_bus.hpp"
+
 namespace duckemu::runtime
 {
 
@@ -19,6 +21,13 @@ HostMapping::~HostMapping()
 
 namespace
 {
+
+void publishMemory(observer::EventBus *bus, const observer::MemoryEvent &event)
+{
+	if (bus != nullptr) {
+		bus->publishMemory(event);
+	}
+}
 
 Error invalidArgument(std::string message)
 {
@@ -116,6 +125,8 @@ Result<GuestVA> RuntimeMemory::map(uint64_t size, uint32_t perms, std::string_vi
 
 	regions_.emplace(base, region);
 	next_free_ = base + size;
+	publishMemory(event_bus_,
+		observer::MemoryEvent{ observer::MemoryOp::Map, region.base.value(), region.size, region.perms, region.name, false });
 	return region.base;
 }
 
@@ -171,6 +182,8 @@ RuntimeMemory::mapFixed(GuestVA address, uint64_t size, uint32_t perms, std::str
 	}
 
 	regions_.emplace(base, region);
+	publishMemory(event_bus_,
+		observer::MemoryEvent{ observer::MemoryOp::Map, region.base.value(), region.size, region.perms, region.name, replace });
 	return region.base;
 }
 
@@ -247,7 +260,11 @@ Result<void> RuntimeMemory::unmap(GuestVA address, uint64_t size)
 	if (address.value() > std::numeric_limits<uint64_t>::max() - size) {
 		return invalidArgument("munmap range overflows");
 	}
-	return unmapRange(address.value(), size);
+	auto result = unmapRange(address.value(), size);
+	if (result.ok()) {
+		publishMemory(event_bus_, observer::MemoryEvent{ observer::MemoryOp::Unmap, address.value(), size, 0, {}, false });
+	}
+	return result;
 }
 
 Result<void> RuntimeMemory::verifyRangeMapped(uint64_t address, uint64_t size) const
@@ -304,6 +321,7 @@ Result<void> RuntimeMemory::protect(GuestVA address, uint64_t size, uint32_t per
 			return mirrored.error();
 		}
 	}
+	publishMemory(event_bus_, observer::MemoryEvent{ observer::MemoryOp::Protect, address.value(), size, perms, {}, false });
 	return {};
 }
 
@@ -428,6 +446,7 @@ Result<GuestVA> RuntimeMemory::brk(GuestVA new_brk)
 		return GuestVA{ brk_current_ };
 	}
 	brk_current_ = new_brk.value();
+	publishMemory(event_bus_, observer::MemoryEvent{ observer::MemoryOp::Brk, brk_current_, 0, 0, {}, false });
 	return GuestVA{ brk_current_ };
 }
 
