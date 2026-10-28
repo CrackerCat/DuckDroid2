@@ -15,15 +15,15 @@
 // Important: arm64 has NO TLS_SLOT_SELF. The thread pointer (tpidr_el0)
 // points at slot 0, which is the DTV, not at itself. `__get_thread()` reads
 // slot 1 and `errno` lives inside pthread_internal_t.
-namespace duckemu::runtime::tls::android13 {
+namespace duckemu::runtime::tls::android13
+{
 
 inline constexpr uint64_t kPointerSize = 8;
 
 // bionic_tcb: raw_slots_storage[BIONIC_TLS_SLOTS], BIONIC_TLS_SLOTS = 10.
 inline constexpr int kMinTlsSlot = -2;
 inline constexpr int kMaxTlsSlot = 7;
-inline constexpr size_t kTcbSize =
-    static_cast<size_t>(kMaxTlsSlot - kMinTlsSlot + 1) * kPointerSize;
+inline constexpr size_t kTcbSize = static_cast<size_t>(kMaxTlsSlot - kMinTlsSlot + 1) * kPointerSize;
 
 // TP = tcb_base + 16, because slot 0 sits after slots -2 and -1.
 inline constexpr uint64_t kThreadPointerOffset = 16;

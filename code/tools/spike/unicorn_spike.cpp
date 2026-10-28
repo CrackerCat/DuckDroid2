@@ -40,7 +40,7 @@ constexpr uint64_t kTls = 0x40000;
 constexpr uint64_t kShared = 0x50000;
 constexpr uint64_t kExtra = 0x60000;
 
-constexpr uint64_t kProbeTimeoutUs = 2'000'000; // safety net, not under test
+constexpr uint64_t kProbeTimeoutUs = 2000000; // safety net, not under test
 
 // ---------------------------------------------------------------------------
 // Reporting
@@ -1226,7 +1226,7 @@ bool probe9() {
 
     // Resume the same engine from its own PC; use a timeout so the loop ends.
     const uc_err resume_err =
-        uc_emu_start(uc, pc_after_stop, 0, 100'000 /* 100 ms */, 0);
+        uc_emu_start(uc, pc_after_stop, 0, 100000 /* 100 ms */, 0);
     size_t timed_out = 0;
     const uc_err timeout_query = uc_query(uc, UC_QUERY_TIMEOUT, &timed_out);
     const uint64_t insns_after_resume = count.insns.load(std::memory_order_acquire);

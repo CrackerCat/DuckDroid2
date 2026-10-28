@@ -4,7 +4,8 @@
 
 // Android arm64 uses the generic syscall table (asm-generic/unistd.h).
 // Only the numbers M1 actually handles are listed here.
-namespace duckemu::runtime::svc {
+namespace duckemu::runtime::svc
+{
 
 inline constexpr uint32_t kSysOpenat = 56;
 inline constexpr uint32_t kSysClose = 57;
@@ -34,6 +35,9 @@ inline constexpr int64_t kEinval = 22;
 inline constexpr int64_t kEnosys = 38;
 inline constexpr int64_t kEio = 5;
 
-inline constexpr int64_t kError(int64_t errno_value) { return -errno_value; }
+inline constexpr int64_t kError(int64_t errno_value)
+{
+	return -errno_value;
+}
 
 } // namespace duckemu::runtime::svc
