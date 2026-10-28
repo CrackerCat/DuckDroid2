@@ -72,6 +72,18 @@ class RuntimeMemory
 	// Minimal brk(): a fixed 1 MiB heap, mapped lazily.
 	Result<GuestVA> brk(GuestVA new_brk);
 
+	// Read-only visit of every current region. The callback must not call back
+	// into RuntimeMemory (it runs while the region table is being walked).
+	// Used by the backend to replay the address space into a new engine.
+	template <typename Function>
+	void forEachRegion(Function &&function) const
+	{
+		for (const auto &entry : regions_)
+		{
+			function(entry.second);
+		}
+	}
+
     private:
 	using RegionMap = std::map<uint64_t, Region>;
 

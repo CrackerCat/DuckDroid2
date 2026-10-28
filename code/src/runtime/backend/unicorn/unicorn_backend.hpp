@@ -1,83 +1,63 @@
 #pragma once
 
-#include <functional>
 #include <memory>
-
-#include <unicorn/unicorn.h>
+#include <mutex>
+#include <vector>
 
 #include "common/error/result.hpp"
+#include "runtime/backend/unicorn/unicorn_engine.hpp"
 #include "runtime/memory/code_notifier.hpp"
-#include "runtime/observer/diagnostic/diagnostic_event.hpp"
 
 namespace duckemu::runtime
 {
 
 class RuntimeMemory;
 
-struct RunOutcome
-{
-	uc_err err = UC_ERR_OK;
-	uint64_t pc = 0;
-};
-
-// Unicorn backend. M1 owns exactly one engine; M3 adds one engine per
-// RuntimeThread and broadcasts map/protect/cache operations to all of them.
+// Owns every engine of one RuntimeInstance and keeps their address-space view
+// and translated-code caches in sync. Engines themselves are owned by their
+// RuntimeThread; the backend only keeps non-owning pointers and is told when
+// one is destroyed.
 class UnicornBackend final : public MapObserver, public CodeWriteNotifier
 {
     public:
 	static Result<std::unique_ptr<UnicornBackend> > create(RuntimeMemory &memory);
-	~UnicornBackend() override;
+	~UnicornBackend();
 
 	UnicornBackend(const UnicornBackend &) = delete;
 	UnicornBackend &operator=(const UnicornBackend &) = delete;
 	UnicornBackend(UnicornBackend &&) = delete;
 	UnicornBackend &operator=(UnicornBackend &&) = delete;
 
-	[[nodiscard]] uc_engine *engine() const
-	{
-		return engine_;
-	}
+	// Creates an engine, mirrors every existing region into it and registers
+	// it for future broadcasts. The caller must hold the instance execution
+	// lock (or otherwise guarantee no engine is running).
+	Result<std::unique_ptr<UnicornEngine> > createEngine(UnicornEngine::SvcTrapHandler handler,
+		UnicornEngine::DiagnosticSink sink);
 
-	void setSvcTrapHandler(std::function<void(uc_engine *, uint32_t)> handler);
+	// Must be called before the engine is destroyed.
+	void destroyEngine(UnicornEngine *engine);
 
-	// Installs the diagnostic memory-access hook (reads and writes). The sink
-	// is invoked on the emulating thread and must not re-enter the engine.
-	// Passing an empty function disables the hook's data path; M2 installs it
-	// once, before the first run.
-	void setDiagnosticSink(std::function<void(const observer::DiagnosticEvent &)> sink);
-
-	Result<RunOutcome> run(GuestVA begin, GuestVA until, uint64_t timeout_us);
-	void stop();
-
-	Result<uint64_t> readRegister(int reg) const;
-	Result<void> writeRegister(int reg, uint64_t value);
-
-	void invalidateCode(GuestVA address, uint64_t size);
-
-	// MapObserver
+	// MapObserver: broadcast to every engine.
 	Result<void> onMapped(const Region &region) override;
 	Result<void> onUnmapped(GuestVA address, uint64_t size) override;
 	Result<void> onProtected(GuestVA address, uint64_t size, uint32_t perms) override;
 
-	// CodeWriteNotifier
+	// CodeWriteNotifier: invalidate translated code in every engine.
 	void onCodeWritten(GuestVA address, uint64_t size) override;
 
+	[[nodiscard]] size_t engineCount() const;
+
     private:
-	UnicornBackend(uc_engine *engine, RuntimeMemory &memory);
+	explicit UnicornBackend(RuntimeMemory &memory);
 
-	static void onIntr(uc_engine *uc, uint32_t intno, void *user_data);
-	static bool
-	onMemWrite(uc_engine *uc, uc_mem_type type, uint64_t address, int size, int64_t value, void *user_data);
-	static bool
-	onDiagnosticAccess(uc_engine *uc, uc_mem_type type, uint64_t address, int size, int64_t value, void *user_data);
+	void broadcastInvalidate(GuestVA address, uint64_t size);
+	// Guest-side SMC: pages written by guest code must drop stale TBs, but only
+	// where the region is executable.
+	void onGuestCodeWrite(GuestVA address, uint64_t size);
 
-	uc_engine *engine_ = nullptr;
 	RuntimeMemory &memory_;
-	std::function<void(uc_engine *, uint32_t)> svc_handler_;
-	std::function<void(const observer::DiagnosticEvent &)> diagnostic_sink_;
-	uc_hook intr_hook_ = 0;
-	uc_hook mem_write_hook_ = 0;
-	uc_hook diagnostic_hook_ = 0;
+	mutable std::mutex mutex_;
+	std::vector<UnicornEngine *> engines_;
 };
 
 } // namespace duckemu::runtime

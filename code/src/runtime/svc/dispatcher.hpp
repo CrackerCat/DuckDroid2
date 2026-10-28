@@ -8,40 +8,44 @@
 #include "runtime/memory/address_space.hpp"
 #include "runtime/memory/thunk/thunk_table.hpp"
 #include "runtime/observer/semantic/svc_event.hpp"
+#include "runtime/observer/trace/trace_clock.hpp"
 
 namespace duckemu::runtime::observer
 {
 class EventBus;
 }
 
+namespace duckemu::runtime::threads
+{
+class RuntimeThread;
+class ThreadSystem;
+}
+
 namespace duckemu::runtime::svc
 {
 
+// One dispatcher per guest thread: it sits on that thread's only engine, so
+// tid, blocking state and the pending syscall are all thread-local.
 class SvcDispatcher
 {
     public:
 	SvcDispatcher(RuntimeMemory &memory,
 		ThunkTable &thunks,
 		observer::EventBus &events,
+		observer::TraceClock &clock,
 		uint32_t pid,
-		uint32_t tid);
+		threads::RuntimeThread &thread,
+		threads::ThreadSystem &threads);
 
 	// UC_HOOK_INTR entry. Decodes the trapping SVC at PC - 4:
 	//   imm == 0            -> Linux syscall, number in x8, args x0..x5
 	//   imm & 0x8000        -> host stub, index = imm & 0x7fff
 	// Publishes one SvcEvent per dispatch, whether it was supported or not.
+	// A blocking syscall leaves the event on the thread (pending_event) and is
+	// published by the owner when it actually resumes.
 	void onTrap(uc_engine *uc, uint32_t intno);
 
 	void resetRunState();
-
-	[[nodiscard]] bool exitRequested() const
-	{
-		return exit_requested_;
-	}
-	[[nodiscard]] int32_t exitCode() const
-	{
-		return exit_code_;
-	}
 
 	struct Stats
 	{
@@ -64,15 +68,10 @@ class SvcDispatcher
 	RuntimeMemory &memory_;
 	ThunkTable &thunks_;
 	observer::EventBus &events_;
+	observer::TraceClock &clock_;
 	uint32_t pid_;
-	uint32_t tid_;
-	// `seq` is the call order (assigned on entry), `id` the emission order
-	// (assigned right before publishing). They differ only once M3 defers
-	// syscall completion.
-	uint64_t next_seq_ = 0;
-	uint64_t next_id_ = 0;
-	bool exit_requested_ = false;
-	int32_t exit_code_ = 0;
+	threads::RuntimeThread &thread_;
+	threads::ThreadSystem &threads_;
 	Stats stats_;
 };
 

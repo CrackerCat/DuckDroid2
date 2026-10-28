@@ -18,24 +18,18 @@ int64_t sysGettid(SyscallContext &ctx)
 	return static_cast<int64_t>(ctx.tid);
 }
 
-int64_t sysExit(SyscallContext &ctx)
-{
-	ctx.requestExit(static_cast<int32_t>(ctx.args[0]));
-	return 0;
-}
-
 } // namespace
 
+// exit/exit_group moved to thread_handlers.cpp: they act on the calling
+// RuntimeThread and, for exit_group, on the whole instance.
 std::optional<int64_t> handleMiscSyscall(SyscallContext &ctx, uint32_t number)
 {
-	switch (number) {
+	switch (number)
+	{
 	case kSysGetpid:
 		return sysGetpid(ctx);
 	case kSysGettid:
 		return sysGettid(ctx);
-	case kSysExit:
-	case kSysExitGroup:
-		return sysExit(ctx);
 	default:
 		return std::nullopt;
 	}

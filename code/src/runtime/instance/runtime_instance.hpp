@@ -12,6 +12,7 @@
 #include "common/error/result.hpp"
 #include "common/id/ids.hpp"
 #include "runtime/memory/thunk/thunk_table.hpp"
+#include "runtime/observer/diagnostic/diagnostic_event.hpp"
 #include "runtime/observer/event_bus.hpp"
 
 namespace duckemu::runtime
@@ -67,8 +68,10 @@ class RuntimeInstance
 	// thread, in guest order, and must not call back into the emulator.
 	uint32_t addSvcListener(observer::EventBus::SvcListener listener);
 	uint32_t addMemoryListener(observer::EventBus::MemoryListener listener);
+	uint32_t addThreadListener(observer::EventBus::ThreadListener listener);
 	bool removeSvcListener(uint32_t id);
 	bool removeMemoryListener(uint32_t id);
+	bool removeThreadListener(uint32_t id);
 
 	// Diagnostic channel. Returns the number of events moved into `out`;
 	// droppedDiagnostics() counts events lost because the ring was full.

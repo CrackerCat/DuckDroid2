@@ -34,10 +34,12 @@ duckemu_guest_blob(BLOB_EXIT_GROUP
   "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/blobs/02_exit_group.S")
 duckemu_guest_blob(BLOB_STACK_DUMP
   "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/blobs/02_stack_dump.S")
+duckemu_guest_blob(BLOB_PTHREAD_JOIN
+  "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/blobs/03_pthread_join.S")
 
 add_custom_target(guest_blobs ALL
   DEPENDS ${BLOB_TLS_READ} ${BLOB_PURE_NATIVE} ${BLOB_EXIT_GROUP}
-          ${BLOB_STACK_DUMP})
+          ${BLOB_STACK_DUMP} ${BLOB_PTHREAD_JOIN})
 
 # ---------------------------------------------------------------------------
 # Test support
@@ -57,12 +59,16 @@ function(duckemu_add_integration_test name)
     DUCKEMU_TRACE_DIR="${CMAKE_CURRENT_BINARY_DIR}/traces")
   add_dependencies(${name} guest_blobs)
   add_test(NAME ${name} COMMAND ${name})
+  # Guest threads have no host timeout by design (M3 design §12): a spinning
+  # guest hangs the caller, so the test runner is the backstop.
+  set_tests_properties(${name} PROPERTIES TIMEOUT 60)
   duckemu_set_warnings(${name})
 endfunction()
 
 duckemu_add_integration_test(01_tls_read)
 duckemu_add_integration_test(02_pure_native)
 duckemu_add_integration_test(02_stack_dump)
+duckemu_add_integration_test(03_pthread_join)
 
 # ---------------------------------------------------------------------------
 # Unit tests

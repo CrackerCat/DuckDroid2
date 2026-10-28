@@ -12,6 +12,8 @@
 #include "runtime/svc/handler.hpp"
 #include "runtime/svc/syscall_names.hpp"
 #include "runtime/svc/syscall_numbers.hpp"
+#include "runtime/threads/runtime_thread.hpp"
+#include "runtime/threads/thread_system.hpp"
 
 namespace duckemu::runtime::svc
 {
@@ -41,7 +43,8 @@ Result<uint64_t> readRegister(uc_engine *uc, int reg)
 {
 	uint64_t value = 0;
 	const uc_err err = uc_reg_read(uc, reg, &value);
-	if (err != UC_ERR_OK) {
+	if (err != UC_ERR_OK)
+	{
 		return Error{ ErrorCode::EmulationFault, uc_strerror(err) };
 	}
 	return value;
@@ -50,7 +53,8 @@ Result<uint64_t> readRegister(uc_engine *uc, int reg)
 Result<void> writeRegister(uc_engine *uc, int reg, uint64_t value)
 {
 	const uc_err err = uc_reg_write(uc, reg, &value);
-	if (err != UC_ERR_OK) {
+	if (err != UC_ERR_OK)
+	{
 		return Error{ ErrorCode::EmulationFault, uc_strerror(err) };
 	}
 	return {};
@@ -65,9 +69,11 @@ std::string hexString(uint64_t value)
 
 bool readArgRegisters(uc_engine *uc, size_t count, std::array<uint64_t, kHostArgCount> &values)
 {
-	for (size_t i = 0; i < count; ++i) {
+	for (size_t i = 0; i < count; ++i)
+	{
 		auto value = readRegister(uc, kArgRegs[i]);
-		if (!value.ok()) {
+		if (!value.ok())
+		{
 			return false;
 		}
 		values[i] = value.value();
@@ -80,32 +86,37 @@ bool readArgRegisters(uc_engine *uc, size_t count, std::array<uint64_t, kHostArg
 SvcDispatcher::SvcDispatcher(RuntimeMemory &memory,
 	ThunkTable &thunks,
 	observer::EventBus &events,
+	observer::TraceClock &clock,
 	uint32_t pid,
-	uint32_t tid)
+	threads::RuntimeThread &thread,
+	threads::ThreadSystem &threads)
 	: memory_(memory)
 	, thunks_(thunks)
 	, events_(events)
+	, clock_(clock)
 	, pid_(pid)
-	, tid_(tid)
+	, thread_(thread)
+	, threads_(threads)
 {
 }
 
 void SvcDispatcher::resetRunState()
 {
-	exit_requested_ = false;
-	exit_code_ = 0;
+	stats_ = {};
 }
 
 void SvcDispatcher::onTrap(uc_engine *uc, uint32_t intno)
 {
-	if (intno != kIntrSwi) {
+	if (intno != kIntrSwi)
+	{
 		DUCKEMU_ERROR("unexpected UC_HOOK_INTR intno=%u (only SVC is handled)", intno);
 		uc_emu_stop(uc);
 		return;
 	}
 
 	auto pc = readRegister(uc, UC_ARM64_REG_PC);
-	if (!pc.ok() || pc.value() < 4) {
+	if (!pc.ok() || pc.value() < 4)
+	{
 		DUCKEMU_ERROR("cannot read PC in the SVC hook");
 		uc_emu_stop(uc);
 		return;
@@ -113,7 +124,8 @@ void SvcDispatcher::onTrap(uc_engine *uc, uint32_t intno)
 
 	const uint64_t svc_address = pc.value() - 4;
 	auto instruction = memory_.readU32(GuestVA{ svc_address });
-	if (!instruction.ok() || (instruction.value() & kSvcInstructionMask) != kSvcInstruction) {
+	if (!instruction.ok() || (instruction.value() & kSvcInstructionMask) != kSvcInstruction)
+	{
 		DUCKEMU_ERROR("UC_HOOK_INTR at 0x%llx but PC-4 is not an SVC",
 			static_cast<unsigned long long>(pc.value()));
 		uc_emu_stop(uc);
@@ -123,23 +135,26 @@ void SvcDispatcher::onTrap(uc_engine *uc, uint32_t intno)
 	const uint32_t imm = (instruction.value() >> 5) & 0xFFFFu;
 
 	observer::SvcEvent event;
-	event.seq = next_seq_++;
-	event.tid = tid_;
+	event.seq = clock_.next_seq++;
+	event.tid = thread_.tid;
 	event.svc_address = svc_address;
 
 	int64_t result = 0;
 	bool stop_after_publish = false;
 
-	if (imm == 0) {
+	if (imm == 0)
+	{
 		event.kind = observer::SvcKind::Syscall;
 
 		auto number = readRegister(uc, UC_ARM64_REG_X8);
 		std::array<uint64_t, kHostArgCount> raw_args{};
-		if (!number.ok() || !readArgRegisters(uc, kSyscallArgCount, raw_args)) {
+		if (!number.ok() || !readArgRegisters(uc, kSyscallArgCount, raw_args))
+		{
 			uc_emu_stop(uc);
 			return;
 		}
-		for (size_t i = 0; i < kSyscallArgCount; ++i) {
+		for (size_t i = 0; i < kSyscallArgCount; ++i)
+		{
 			event.args[i] = raw_args[i];
 		}
 
@@ -147,7 +162,9 @@ void SvcDispatcher::onTrap(uc_engine *uc, uint32_t intno)
 		const std::string_view name = syscallName(event.number);
 		event.name = name.empty() ? "sys#" + std::to_string(event.number) : std::string(name);
 		result = dispatchSyscall(event.number, event.args, event.supported);
-	} else if ((imm & kHostStubBase) != 0) {
+	}
+	else if ((imm & kHostStubBase) != 0)
+	{
 		event.kind = observer::SvcKind::HostStub;
 		event.number = imm & kHostStubIndexMask;
 
@@ -155,15 +172,19 @@ void SvcDispatcher::onTrap(uc_engine *uc, uint32_t intno)
 		event.name = name.empty() ? "host#" + std::to_string(event.number) : std::string(name);
 
 		std::array<uint64_t, kHostArgCount> raw_args{};
-		if (!readArgRegisters(uc, kHostArgCount, raw_args)) {
+		if (!readArgRegisters(uc, kHostArgCount, raw_args))
+		{
 			uc_emu_stop(uc);
 			return;
 		}
-		for (size_t i = 0; i < kSyscallArgCount; ++i) {
+		for (size_t i = 0; i < kSyscallArgCount; ++i)
+		{
 			event.args[i] = raw_args[i];
 		}
 		result = invokeHostStub(event.number, raw_args, event.supported);
-	} else {
+	}
+	else
+	{
 		event.kind = observer::SvcKind::UnknownTrap;
 		event.number = imm;
 		event.name = "trap#" + hexString(imm);
@@ -172,22 +193,34 @@ void SvcDispatcher::onTrap(uc_engine *uc, uint32_t intno)
 		stop_after_publish = true;
 	}
 
-	event.result = static_cast<uint64_t>(result);
-
-	if (auto written = writeRegister(uc, UC_ARM64_REG_X0, event.result); !written.ok()) {
+	// A blocking handler has parked the thread: the syscall is not done, so it
+	// gets no x0 write and no event yet. The owner publishes on resume.
+	if (thread_.state == threads::ThreadState::Blocked)
+	{
+		thread_.pending_event = std::move(event);
 		uc_emu_stop(uc);
 		return;
 	}
 
-	if (!event.supported) {
+	event.result = static_cast<uint64_t>(result);
+
+	if (auto written = writeRegister(uc, UC_ARM64_REG_X0, event.result); !written.ok())
+	{
+		uc_emu_stop(uc);
+		return;
+	}
+
+	if (!event.supported)
+	{
 		captureStack(uc, event);
 		logUnsupported(event);
 	}
 
-	event.id = next_id_++;
+	event.id = clock_.next_id++;
 	events_.publishSvc(event);
 
-	if (exit_requested_ || stop_after_publish) {
+	if (thread_.exit_requested || threads_.stopping() || stop_after_publish)
+	{
 		uc_emu_stop(uc);
 	}
 }
@@ -197,32 +230,37 @@ int64_t SvcDispatcher::dispatchSyscall(uint32_t number, const std::array<uint64_
 	++stats_.svc_calls;
 	stats_.last_syscall = number;
 
-	SyscallContext ctx{ {}, memory_, pid_, tid_ };
-	for (size_t i = 0; i < kSyscallArgCount; ++i) {
+	SyscallContext ctx{ {}, memory_, pid_, thread_.tid, thread_, threads_ };
+	for (size_t i = 0; i < kSyscallArgCount; ++i)
+	{
 		ctx.args[i] = args[i];
 	}
 
 	std::optional<int64_t> result = handleMemorySyscall(ctx, number);
-	if (!result.has_value()) {
+	if (!result.has_value())
+	{
 		result = handleFsSyscall(ctx, number);
 	}
-	if (!result.has_value()) {
+	if (!result.has_value())
+	{
 		result = handleMiscSyscall(ctx, number);
+	}
+	if (!result.has_value())
+	{
+		result = handleThreadSyscall(ctx, number);
 	}
 
 	int64_t value = 0;
-	if (result.has_value()) {
+	if (result.has_value())
+	{
 		supported = true;
 		value = result.value();
-	} else {
+	}
+	else
+	{
 		supported = false;
 		++stats_.unknown;
 		value = kError(kEnosys);
-	}
-
-	if (ctx.exit_requested) {
-		exit_requested_ = true;
-		exit_code_ = ctx.exit_code;
 	}
 	return value;
 }
@@ -234,7 +272,8 @@ int64_t SvcDispatcher::invokeHostStub(uint32_t index, const std::array<uint64_t,
 
 	++stats_.host_calls;
 	auto result = thunks_.invoke(index, call);
-	if (!result.ok()) {
+	if (!result.ok())
+	{
 		supported = false;
 		return kError(kEnosys);
 	}
@@ -246,7 +285,8 @@ void SvcDispatcher::captureStack(uc_engine *uc, observer::SvcEvent &event) const
 {
 	auto sp = readRegister(uc, UC_ARM64_REG_SP);
 	auto fp = readRegister(uc, UC_ARM64_REG_X29);
-	if (!sp.ok() || !fp.ok()) {
+	if (!sp.ok() || !fp.ok())
+	{
 		event.stack_stop = "cannot read sp/fp";
 		return;
 	}
@@ -259,7 +299,8 @@ void SvcDispatcher::captureStack(uc_engine *uc, observer::SvcEvent &event) const
 void SvcDispatcher::logUnsupported(const observer::SvcEvent &event) const
 {
 	std::string message = "unsupported ";
-	switch (event.kind) {
+	switch (event.kind)
+	{
 	case observer::SvcKind::Syscall:
 		message += "syscall ";
 		break;
@@ -273,13 +314,16 @@ void SvcDispatcher::logUnsupported(const observer::SvcEvent &event) const
 	message += event.name;
 	message += " at ";
 	message += hexString(event.svc_address);
-	if (!event.stack.empty()) {
+	if (!event.stack.empty())
+	{
 		message += "\n    guest stack:";
-		for (const auto &frame : event.stack) {
+		for (const auto &frame : event.stack)
+		{
 			message += "\n    ";
 			message += frame.name;
 		}
-		if (!event.stack_stop.empty()) {
+		if (!event.stack_stop.empty())
+		{
 			message += "\n    (walk stopped: " + event.stack_stop + ")";
 		}
 	}

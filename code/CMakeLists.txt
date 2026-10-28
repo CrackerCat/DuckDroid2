@@ -69,17 +69,20 @@ add_library(duckemu_runtime STATIC
   src/runtime/instance/runtime_instance.cpp
   src/runtime/memory/address_space.cpp
   src/runtime/memory/thunk/thunk_table.cpp
+  src/runtime/backend/unicorn/unicorn_engine.cpp
   src/runtime/backend/unicorn/unicorn_backend.cpp
   src/runtime/backend/unicorn/unicorn_hooks.cpp
   src/runtime/observer/event_bus.cpp
   src/runtime/observer/diagnostic/guest_stack.cpp
   src/runtime/observer/trace/svc_trace.cpp
   src/runtime/threads/tls/tls_manager.cpp
+  src/runtime/threads/scheduler.cpp
   src/runtime/svc/dispatcher.cpp
   src/runtime/svc/syscall_names.cpp
   src/runtime/svc/handlers/memory_handlers.cpp
   src/runtime/svc/handlers/fs_handlers.cpp
   src/runtime/svc/handlers/misc_handlers.cpp
+  src/runtime/svc/handlers/thread_handlers.cpp
 )
 target_include_directories(duckemu_runtime PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(duckemu_runtime PUBLIC
