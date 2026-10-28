@@ -65,6 +65,25 @@ add_library(duckemu_common STATIC
 target_include_directories(duckemu_common PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 duckemu_set_warnings(duckemu_common)
 
+add_library(duckemu_runtime STATIC
+  src/runtime/instance/runtime_instance.cpp
+  src/runtime/memory/address_space.cpp
+  src/runtime/memory/thunk/thunk_table.cpp
+  src/runtime/backend/unicorn/unicorn_backend.cpp
+  src/runtime/threads/tls/tls_manager.cpp
+  src/runtime/svc/dispatcher.cpp
+  src/runtime/svc/handlers/memory_handlers.cpp
+  src/runtime/svc/handlers/fs_handlers.cpp
+  src/runtime/svc/handlers/misc_handlers.cpp
+)
+target_include_directories(duckemu_runtime PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(duckemu_runtime PUBLIC
+  duckemu_common
+  duckemu_unicorn
+  Threads::Threads
+)
+duckemu_set_warnings(duckemu_runtime)
+
 # M0 spike: deliberately flat, no runtime abstractions.
 add_executable(unicorn_spike tools/spike/unicorn_spike.cpp)
 target_link_libraries(unicorn_spike PRIVATE
