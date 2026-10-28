@@ -98,6 +98,10 @@ class UnicornEngine
 	onMemWrite(uc_engine *uc, uc_mem_type type, uint64_t address, int size, int64_t value, void *user_data);
 	static bool
 	onDiagnosticAccess(uc_engine *uc, uc_mem_type type, uint64_t address, int size, int64_t value, void *user_data);
+	// Fault diagnostics: Unicorn only reports UC_ERR_*_UNMAPPED, without the
+	// address that caused it. Log pc/address before stopping.
+	static bool
+	onUnmappedAccess(uc_engine *uc, uc_mem_type type, uint64_t address, int size, int64_t value, void *user_data);
 
 	uc_engine *engine_ = nullptr;
 	SvcTrapHandler svc_handler_;
@@ -106,6 +110,7 @@ class UnicornEngine
 	uc_hook intr_hook_ = 0;
 	uc_hook mem_write_hook_ = 0;
 	uc_hook diagnostic_hook_ = 0;
+	uc_hook unmapped_hook_ = 0;
 };
 
 } // namespace duckemu::runtime

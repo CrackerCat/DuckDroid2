@@ -38,6 +38,24 @@ Result<std::unique_ptr<UnicornEngine> > UnicornEngine::create()
 		return unicornError(open_err, "uc_open");
 	}
 
+	// Unicorn's default AArch64 model (cortex-a72) does not advertise FEAT_LSE,
+	// so the ROM's libc dies on its first `ldaprb` with an undefined-instruction
+	// trap. `max` advertises ATOMIC (LSE) in ID_AA64ISAR0; guest-visible HWCAP
+	// still comes from our IFUNC/auxv values, which stay 0.
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wold-style-cast"
+#endif
+	const uc_err model_err = uc_ctl_set_cpu_model(engine, UC_CPU_ARM64_MAX);
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
+	if (model_err != UC_ERR_OK)
+	{
+		uc_close(engine);
+		return unicornError(model_err, "uc_ctl_set_cpu_model");
+	}
+
 	// M0 measured Unicorn's default ARM64 page size as 0x400 (TARGET_PAGE_BITS_MIN
 	// = 10). Android's guest pages are 4 KiB; align the emulator with that
 	// before the engine is initialized by the first map/run.
@@ -81,7 +99,41 @@ Result<std::unique_ptr<UnicornEngine> > UnicornEngine::create()
 		return unicornError(write_err, "uc_hook_add(UC_HOOK_MEM_WRITE)");
 	}
 
+	const uc_err unmapped_err = uc_hook_add(engine,
+		&self->unmapped_hook_,
+		UC_HOOK_MEM_READ_UNMAPPED | UC_HOOK_MEM_WRITE_UNMAPPED | UC_HOOK_MEM_FETCH_UNMAPPED,
+		reinterpret_cast<void *>(&UnicornEngine::onUnmappedAccess),
+		self.get(),
+		1,
+		0);
+	if (unmapped_err != UC_ERR_OK)
+	{
+		return unicornError(unmapped_err, "uc_hook_add(unmapped)");
+	}
+
 	return self;
+}
+
+bool UnicornEngine::onUnmappedAccess(uc_engine *uc,
+	uc_mem_type type,
+	uint64_t address,
+	int size,
+	int64_t value,
+	void *user_data)
+{
+	(void)value;
+	(void)user_data;
+	uint64_t pc = 0;
+	(void)uc_reg_read(uc, UC_ARM64_REG_PC, &pc);
+	const char *kind = type == UC_MEM_WRITE_UNMAPPED ? "write" :
+				  type == UC_MEM_READ_UNMAPPED  ? "read" :
+								  "fetch";
+	DUCKEMU_ERROR("guest %s unmapped: address=0x%llx size=%d pc=0x%llx",
+		kind,
+		static_cast<unsigned long long>(address),
+		size,
+		static_cast<unsigned long long>(pc));
+	return false;
 }
 
 void UnicornEngine::setSvcTrapHandler(SvcTrapHandler handler)
