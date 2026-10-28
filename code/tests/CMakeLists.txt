@@ -233,6 +233,17 @@ add_test(NAME 04c_globals COMMAND 04c_globals)
 set_tests_properties(04c_globals PROPERTIES TIMEOUT 60)
 duckemu_set_warnings(04c_globals)
 
+# M4.6 S4: preinit + scudo malloc with initializers enabled.
+add_executable(04c_preinit integration/04c_preinit.cpp)
+target_link_libraries(04c_preinit PRIVATE duckemu_runtime duckemu_test_support)
+target_compile_definitions(04c_preinit PRIVATE
+  DUCKEMU_TRACE_DIR="${CMAKE_CURRENT_BINARY_DIR}/traces"
+  DUCKEMU_ROM_BOOTSTRAP="${DUCKEMU_ROM_BOOTSTRAP}"
+  DUCKEMU_ROM_LIB64="${DUCKEMU_ROM_LIB64}")
+add_test(NAME 04c_preinit COMMAND 04c_preinit)
+set_tests_properties(04c_preinit PROPERTIES TIMEOUT 120)
+duckemu_set_warnings(04c_preinit)
+
 add_executable(elf_image_test unit/runtime/loader/elf_image_test.cpp)
 target_link_libraries(elf_image_test PRIVATE duckemu_runtime duckemu_test_support)
 target_compile_definitions(elf_image_test PRIVATE

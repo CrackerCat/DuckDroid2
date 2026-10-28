@@ -60,6 +60,7 @@ Result<std::shared_ptr<HostMapping> > RuntimeMemory::allocateHost(uint64_t size)
 
 RuntimeMemory::RegionMap::const_iterator RuntimeMemory::findRegion(uint64_t address) const
 {
+	address = untagAddress(address);
 	auto it = regions_.upper_bound(address);
 	if (it == regions_.begin()) {
 		return regions_.end();
@@ -70,6 +71,7 @@ RuntimeMemory::RegionMap::const_iterator RuntimeMemory::findRegion(uint64_t addr
 
 RuntimeMemory::RegionMap::iterator RuntimeMemory::findRegion(uint64_t address)
 {
+	address = untagAddress(address);
 	auto it = regions_.upper_bound(address);
 	if (it == regions_.begin()) {
 		return regions_.end();
@@ -382,6 +384,7 @@ Result<void> RuntimeMemory::write(GuestVA address, const void *data, uint64_t si
 	if (size == 0) {
 		return {};
 	}
+	address = GuestVA{ untagAddress(address.value()) };
 	const uint64_t end = address.value() + size;
 	if (end < address.value()) {
 		return invalidArgument("write range overflows");
@@ -416,6 +419,7 @@ Result<void> RuntimeMemory::read(GuestVA address, void *data, uint64_t size) con
 	if (size == 0) {
 		return {};
 	}
+	address = GuestVA{ untagAddress(address.value()) };
 	const uint64_t end = address.value() + size;
 	if (end < address.value()) {
 		return invalidArgument("read range overflows");
