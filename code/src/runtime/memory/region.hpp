@@ -11,6 +11,35 @@ namespace duckemu::runtime
 
 inline constexpr uint64_t kGuestPageSize = 0x1000;
 
+// Guest anonymous mmap arena. Unicorn does not implement AArch64 TBI, while
+// bionic tags scudo heap pointers in the top byte. Every anonymous mapping in
+// this arena is mirrored at 1<<56 and 2<<56 aliases pointing at the same host
+// memory, so tagged loads/stores land on the real bytes.
+inline constexpr uint64_t kAnonymousArenaBase = 0x0000700000000000ULL;
+inline constexpr uint64_t kAnonymousArenaSize = 0x0000000400000000ULL; // 16 GiB
+inline constexpr uint64_t kAddressTagShift = 56;
+
+[[nodiscard]] constexpr uint64_t untagAddress(uint64_t address) noexcept
+{
+	return address & ~(0xFFULL << kAddressTagShift);
+}
+
+[[nodiscard]] constexpr uint64_t tag0Address(uint64_t address) noexcept
+{
+	return address;
+}
+
+[[nodiscard]] constexpr uint64_t taggedAlias(uint64_t address, uint64_t tag) noexcept
+{
+	return address | (tag << kAddressTagShift);
+}
+
+[[nodiscard]] constexpr bool inAnonymousArena(uint64_t address) noexcept
+{
+	const uint64_t base = untagAddress(address);
+	return base >= kAnonymousArenaBase && base < kAnonymousArenaBase + kAnonymousArenaSize;
+}
+
 // Guest permission bits. Numerically identical to Linux PROT_* and Unicorn
 // UC_PROT_*; no translation table is needed.
 enum GuestPerm : uint32_t

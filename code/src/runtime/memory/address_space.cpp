@@ -130,6 +130,58 @@ Result<GuestVA> RuntimeMemory::map(uint64_t size, uint32_t perms, std::string_vi
 	return region.base;
 }
 
+Result<GuestVA> RuntimeMemory::mapAnonymous(uint64_t size, uint32_t perms, std::string_view name)
+{
+	if (size == 0) {
+		return invalidArgument("mmap size is zero");
+	}
+	size = pageUp(size);
+	const uint64_t arena_end = kAnonymousArenaBase + kAnonymousArenaSize;
+	if (size > kAnonymousArenaSize) {
+		return Error{ ErrorCode::OutOfMemory, "anonymous mmap exceeds the arena" };
+	}
+
+	uint64_t base = kAnonymousArenaBase;
+	bool moved = true;
+	while (moved) {
+		moved = false;
+		for (const auto &[key, region] : regions_) {
+			(void)key;
+			if (base < region.end() && base + size > region.base.value()) {
+				base = pageUp(region.end());
+				moved = true;
+			}
+		}
+	}
+	if (base < kAnonymousArenaBase || base > arena_end || size > arena_end - base) {
+		return Error{ ErrorCode::OutOfMemory, "anonymous arena is exhausted" };
+	}
+
+	auto host = allocateHost(size);
+	if (!host.ok()) {
+		return host.error();
+	}
+
+	Region region;
+	region.base = GuestVA{ base };
+	region.size = size;
+	region.perms = perms;
+	region.host = std::move(host).value();
+	region.name = std::string(name);
+
+	if (observer_ != nullptr) {
+		auto mirrored = observer_->onMapped(region);
+		if (!mirrored.ok()) {
+			return mirrored.error();
+		}
+	}
+
+	regions_.emplace(base, region);
+	publishMemory(event_bus_,
+		observer::MemoryEvent{ observer::MemoryOp::Map, region.base.value(), region.size, region.perms, region.name, false });
+	return region.base;
+}
+
 Result<GuestVA>
 RuntimeMemory::mapFixed(GuestVA address, uint64_t size, uint32_t perms, std::string_view name, bool replace)
 {

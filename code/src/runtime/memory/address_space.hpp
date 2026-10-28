@@ -36,6 +36,11 @@ class RuntimeMemory
 	// Allocate at an arbitrary address (mmap without MAP_FIXED).
 	Result<GuestVA> map(uint64_t size, uint32_t perms, std::string_view name);
 
+	// Guest mmap: allocate inside the anonymous arena so the backend can
+	// mirror the mapping at the TBI tag aliases. Runtime-internal allocations
+	// (stack, TLS, shared globals) keep using map().
+	Result<GuestVA> mapAnonymous(uint64_t size, uint32_t perms, std::string_view name);
+
 	// Allocate at an exact address. With replace=true this is MAP_FIXED:
 	// overlapping regions are unmapped first.
 	Result<GuestVA> mapFixed(GuestVA address, uint64_t size, uint32_t perms, std::string_view name, bool replace);

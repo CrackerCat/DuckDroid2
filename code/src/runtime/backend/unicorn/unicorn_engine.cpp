@@ -233,31 +233,65 @@ void UnicornEngine::invalidateCode(GuestVA address, uint64_t size)
 
 Result<void> UnicornEngine::mapRegion(const Region &region)
 {
-	const uc_err err =
-		uc_mem_map_ptr(engine_, region.base.value(), region.size, region.perms, region.hostPtr());
+	const uint64_t base = region.base.value();
+	const uc_err err = uc_mem_map_ptr(engine_, base, region.size, region.perms, region.hostPtr());
 	if (err != UC_ERR_OK)
 	{
 		return unicornError(err, "uc_mem_map_ptr");
+	}
+
+	// Unicorn has no AArch64 TBI. Scudo tags heap pointers in the top byte, so
+	// mirror arena mappings at tag 1 and 2 over the same host pages.
+	if (!inAnonymousArena(base))
+	{
+		return {};
+	}
+	for (uint64_t tag = 1; tag <= 2; ++tag)
+	{
+		const uint64_t alias = taggedAlias(base, tag);
+		const uc_err alias_err =
+			uc_mem_map_ptr(engine_, alias, region.size, region.perms, region.hostPtr());
+		if (alias_err != UC_ERR_OK)
+		{
+			(void)uc_mem_unmap(engine_, base, region.size);
+			return unicornError(alias_err, "uc_mem_map_ptr(alias)");
+		}
 	}
 	return {};
 }
 
 Result<void> UnicornEngine::unmapRegion(GuestVA address, uint64_t size)
 {
-	const uc_err err = uc_mem_unmap(engine_, address.value(), size);
+	const uint64_t base = untagAddress(address.value());
+	const uc_err err = uc_mem_unmap(engine_, base, size);
 	if (err != UC_ERR_OK)
 	{
 		return unicornError(err, "uc_mem_unmap");
+	}
+	if (inAnonymousArena(base))
+	{
+		for (uint64_t tag = 1; tag <= 2; ++tag)
+		{
+			(void)uc_mem_unmap(engine_, taggedAlias(base, tag), size);
+		}
 	}
 	return {};
 }
 
 Result<void> UnicornEngine::protectRegion(GuestVA address, uint64_t size, uint32_t perms)
 {
-	const uc_err err = uc_mem_protect(engine_, address.value(), size, perms);
+	const uint64_t base = untagAddress(address.value());
+	const uc_err err = uc_mem_protect(engine_, base, size, perms);
 	if (err != UC_ERR_OK)
 	{
 		return unicornError(err, "uc_mem_protect");
+	}
+	if (inAnonymousArena(base))
+	{
+		for (uint64_t tag = 1; tag <= 2; ++tag)
+		{
+			(void)uc_mem_protect(engine_, taggedAlias(base, tag), size, perms);
+		}
 	}
 	return {};
 }

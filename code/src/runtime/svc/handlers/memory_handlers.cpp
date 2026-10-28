@@ -33,9 +33,16 @@ int64_t toErrno(const Error &error)
 	}
 }
 
+// bionic passes scudo pointers with a TB I tag in the top byte; the kernel
+// would ignore it. Unicorn does not, so strip it at the syscall boundary.
+uint64_t untagged(uint64_t address)
+{
+	return address & ~(0xFFULL << 56);
+}
+
 int64_t sysMmap(SyscallContext &ctx)
 {
-	const uint64_t address = ctx.args[0];
+	const uint64_t address = untagged(ctx.args[0]);
 	const uint64_t length = ctx.args[1];
 	const uint32_t prot = static_cast<uint32_t>(ctx.args[2] & PermAll);
 	const uint64_t flags = ctx.args[3];
@@ -54,7 +61,7 @@ int64_t sysMmap(SyscallContext &ctx)
 
 	Result<GuestVA> mapped = (flags & kMapFixed) != 0 ?
 		ctx.memory.mapFixed(GuestVA{ address }, length, prot, "guest-mmap", true) :
-		ctx.memory.map(length, prot, "guest-mmap");
+		ctx.memory.mapAnonymous(length, prot, "guest-mmap");
 	if (!mapped.ok()) {
 		return toErrno(mapped.error());
 	}
@@ -63,7 +70,7 @@ int64_t sysMmap(SyscallContext &ctx)
 
 int64_t sysMunmap(SyscallContext &ctx)
 {
-	const uint64_t address = ctx.args[0];
+	const uint64_t address = untagged(ctx.args[0]);
 	const uint64_t length = ctx.args[1];
 	if (length == 0 || address % kGuestPageSize != 0) {
 		return kError(kEinval);
@@ -74,7 +81,7 @@ int64_t sysMunmap(SyscallContext &ctx)
 
 int64_t sysMprotect(SyscallContext &ctx)
 {
-	const uint64_t address = ctx.args[0];
+	const uint64_t address = untagged(ctx.args[0]);
 	const uint64_t length = ctx.args[1];
 	const uint32_t prot = static_cast<uint32_t>(ctx.args[2] & PermAll);
 	if (length == 0 || address % kGuestPageSize != 0) {
