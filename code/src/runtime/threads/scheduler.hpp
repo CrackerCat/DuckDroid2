@@ -28,6 +28,11 @@ namespace observer
 class EventBus;
 }
 
+namespace vfs
+{
+class VirtualFileSystem;
+}
+
 namespace threads
 {
 
@@ -41,6 +46,8 @@ struct SchedulerConfig
 	uint64_t default_timeout_us = 5000000;
 	bool record_memory_access = false;
 	size_t diagnostic_capacity = 1u << 14;
+	// Process-wide file table; every dispatcher gets the same instance.
+	vfs::VirtualFileSystem *vfs = nullptr;
 };
 
 // Owns the guest threads of one RuntimeInstance. One host thread per guest

@@ -17,6 +17,11 @@ enum class ErrorCode : int {
     Unmapped,
     EmulationFault,
     Internal,
+    // Added when the VFS became a syscall-facing component: fs_handlers has to
+    // turn these back into distinct errno values.
+    BadFileDescriptor,
+    IsDirectory,
+    NotDirectory,
 };
 
 constexpr std::string_view to_string(ErrorCode code) noexcept {
@@ -41,6 +46,12 @@ constexpr std::string_view to_string(ErrorCode code) noexcept {
         return "emulation-fault";
     case ErrorCode::Internal:
         return "internal";
+    case ErrorCode::BadFileDescriptor:
+        return "bad-file-descriptor";
+    case ErrorCode::IsDirectory:
+        return "is-directory";
+    case ErrorCode::NotDirectory:
+        return "not-directory";
     }
     return "unknown";
 }

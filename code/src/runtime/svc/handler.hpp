@@ -11,6 +11,11 @@ class RuntimeThread;
 class ThreadSystem;
 }
 
+namespace duckemu::runtime::vfs
+{
+class VirtualFileSystem;
+}
+
 namespace duckemu::runtime::svc
 {
 
@@ -23,6 +28,8 @@ struct SyscallContext
 	// The calling guest thread and the scheduler operations handlers may use.
 	threads::RuntimeThread &thread;
 	threads::ThreadSystem &threads;
+	// Process-wide file namespace and descriptor table.
+	vfs::VirtualFileSystem &vfs;
 };
 
 // Each subsystem returns nullopt for "not my syscall"; the dispatcher then

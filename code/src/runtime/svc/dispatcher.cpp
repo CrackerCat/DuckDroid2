@@ -14,6 +14,7 @@
 #include "runtime/svc/syscall_numbers.hpp"
 #include "runtime/threads/runtime_thread.hpp"
 #include "runtime/threads/thread_system.hpp"
+#include "runtime/vfs/virtual_file_system.hpp"
 
 namespace duckemu::runtime::svc
 {
@@ -161,7 +162,8 @@ SvcDispatcher::SvcDispatcher(RuntimeMemory &memory,
 	observer::TraceClock &clock,
 	uint32_t pid,
 	threads::RuntimeThread &thread,
-	threads::ThreadSystem &threads)
+	threads::ThreadSystem &threads,
+	vfs::VirtualFileSystem &vfs)
 	: memory_(memory)
 	, thunks_(thunks)
 	, events_(events)
@@ -169,6 +171,7 @@ SvcDispatcher::SvcDispatcher(RuntimeMemory &memory,
 	, pid_(pid)
 	, thread_(thread)
 	, threads_(threads)
+	, vfs_(vfs)
 {
 }
 
@@ -302,7 +305,7 @@ int64_t SvcDispatcher::dispatchSyscall(uint32_t number, const std::array<uint64_
 	++stats_.svc_calls;
 	stats_.last_syscall = number;
 
-	SyscallContext ctx{ {}, memory_, pid_, thread_.tid, thread_, threads_ };
+	SyscallContext ctx{ {}, memory_, pid_, thread_.tid, thread_, threads_, vfs_ };
 	for (size_t i = 0; i < kSyscallArgCount; ++i)
 	{
 		ctx.args[i] = args[i];

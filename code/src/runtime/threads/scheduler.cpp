@@ -75,6 +75,10 @@ ThreadScheduler::~ThreadScheduler()
 
 Result<void> ThreadScheduler::start()
 {
+	if (config_.vfs == nullptr)
+	{
+		return Error{ ErrorCode::Internal, "the scheduler requires a file system" };
+	}
 	next_tid_ = config_.tid + 1;
 
 	auto created = createThreadObject(config_.tid, 0, true);
@@ -153,8 +157,14 @@ Result<std::unique_ptr<RuntimeThread> > ThreadScheduler::createThreadObject(
 		thread->diagnostics = std::make_unique<observer::RingBuffer<observer::DiagnosticEvent> >(
 			config_.diagnostic_capacity);
 	}
-	thread->dispatcher =
-		std::make_unique<svc::SvcDispatcher>(memory_, thunks_, events_, clock_, config_.pid, *thread, *this);
+	thread->dispatcher = std::make_unique<svc::SvcDispatcher>(memory_,
+		thunks_,
+		events_,
+		clock_,
+		config_.pid,
+		*thread,
+		*this,
+		*config_.vfs);
 
 	auto engine = createEngineFor(*thread);
 	if (!engine.ok())

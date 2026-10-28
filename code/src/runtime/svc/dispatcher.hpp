@@ -21,6 +21,11 @@ class RuntimeThread;
 class ThreadSystem;
 }
 
+namespace duckemu::runtime::vfs
+{
+class VirtualFileSystem;
+}
+
 namespace duckemu::runtime::svc
 {
 
@@ -35,7 +40,8 @@ class SvcDispatcher
 		observer::TraceClock &clock,
 		uint32_t pid,
 		threads::RuntimeThread &thread,
-		threads::ThreadSystem &threads);
+		threads::ThreadSystem &threads,
+		vfs::VirtualFileSystem &vfs);
 
 	// UC_HOOK_INTR entry. Decodes the trapping SVC at PC - 4:
 	//   imm == 0            -> Linux syscall, number in x8, args x0..x5
@@ -72,6 +78,7 @@ class SvcDispatcher
 	uint32_t pid_;
 	threads::RuntimeThread &thread_;
 	threads::ThreadSystem &threads_;
+	vfs::VirtualFileSystem &vfs_;
 	Stats stats_;
 };
 

@@ -40,6 +40,16 @@ class BionicGlobals
 		return block_;
 	}
 
+	// The auxv array written into the block; /proc/self/auxv serves these bytes.
+	[[nodiscard]] GuestVA auxvAddress() const
+	{
+		return auxv_address_;
+	}
+	[[nodiscard]] uint64_t auxvSize() const
+	{
+		return auxv_size_;
+	}
+
 	// Published to StaticTlsLayout before preinit runs. The loader owns the
 	// actual per-module layout; this method only mirrors its totals.
 	void setStaticTlsLayout(uint64_t size, uint64_t alignment, uint64_t tcb_offset, uint64_t bionic_tls_offset);
@@ -50,6 +60,9 @@ class BionicGlobals
 	RuntimeMemory &memory_;
 	BionicGlobalsConfig config_;
 	GuestVA block_;
+
+	GuestVA auxv_address_;
+	uint64_t auxv_size_ = 0;
 	uint64_t tls_size_ = 0;
 	uint64_t tls_alignment_ = 16;
 	uint64_t tls_tcb_offset_ = 0;

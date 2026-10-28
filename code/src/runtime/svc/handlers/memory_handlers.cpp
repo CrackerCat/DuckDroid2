@@ -1,9 +1,12 @@
+#include <algorithm>
 #include <cstdint>
+#include <vector>
 
-#include "common/log/logger.hpp"
 #include "runtime/memory/address_space.hpp"
 #include "runtime/svc/handler.hpp"
 #include "runtime/svc/syscall_numbers.hpp"
+#include "runtime/vfs/file.hpp"
+#include "runtime/vfs/virtual_file_system.hpp"
 
 namespace duckemu::runtime::svc
 {
@@ -14,6 +17,8 @@ constexpr uint64_t kMapShared = 0x01;
 constexpr uint64_t kMapPrivate = 0x02;
 constexpr uint64_t kMapFixed = 0x10;
 constexpr uint64_t kMapAnonymous = 0x20;
+
+constexpr uint64_t kMaxFileMmapBytes = 1ULL << 20; // per read chunk while filling
 
 int64_t toErrno(const Error &error)
 {
@@ -40,6 +45,38 @@ uint64_t untagged(uint64_t address)
 	return address & ~(0xFFULL << 56);
 }
 
+// Copies a file's bytes into a freshly mapped guest range. MAP_PRIVATE
+// semantics are exact (the guest gets a copy); a writable MAP_SHARED mapping
+// would need write-back and is refused before we get here.
+int64_t fillFileMapping(SyscallContext &ctx, vfs::File &file, GuestVA base,
+	uint64_t length, uint64_t offset)
+{
+	const uint64_t span = pageUp(length);
+	uint64_t cursor = 0;
+	while (cursor < span) {
+		const uint64_t chunk = std::min(span - cursor, kMaxFileMmapBytes);
+		std::vector<uint8_t> buffer(static_cast<size_t>(chunk));
+		auto read = file.readAt(offset + cursor, buffer.data(), chunk);
+		if (!read.ok()) {
+			(void)ctx.memory.unmap(base, span);
+			return kError(kEio);
+		}
+		if (read.value() == 0) {
+			break; // past EOF: the rest of the mapping stays zero
+		}
+		auto written = ctx.memory.write(base + cursor, buffer.data(), read.value());
+		if (!written.ok()) {
+			(void)ctx.memory.unmap(base, span);
+			return kError(kEfault);
+		}
+		cursor += read.value();
+		if (read.value() < chunk) {
+			break;
+		}
+	}
+	return 0;
+}
+
 int64_t sysMmap(SyscallContext &ctx)
 {
 	const uint64_t address = untagged(ctx.args[0]);
@@ -51,19 +88,41 @@ int64_t sysMmap(SyscallContext &ctx)
 	if (length == 0) {
 		return kError(kEinval);
 	}
+
+	vfs::File *file = nullptr;
+	uint64_t file_offset = 0;
 	if ((flags & kMapAnonymous) == 0) {
-		// File-backed mappings need the VFS/loader; they arrive in M4.
-		DUCKEMU_WARN("mmap(fd=%lld) is not supported yet", static_cast<long long>(fd));
-		return kError(kEnodev);
+		if (fd < 0) {
+			return kError(kEbadf);
+		}
+		file = ctx.vfs.find(static_cast<uint64_t>(fd));
+		if (file == nullptr) {
+			return kError(kEbadf);
+		}
+		file_offset = ctx.args[5];
+		if (file_offset % kGuestPageSize != 0) {
+			return kError(kEinval);
+		}
+		if ((flags & kMapShared) != 0 && (prot & PermWrite) != 0) {
+			// Write-back to the host file is not implemented; read-only and
+			// private mappings are copies and need no backing coherency.
+			return kError(kEacces);
+		}
 	}
-	(void)kMapShared;
 	(void)kMapPrivate;
 
+	const std::string name = file != nullptr ? "file-mmap" : "guest-mmap";
 	Result<GuestVA> mapped = (flags & kMapFixed) != 0 ?
-		ctx.memory.mapFixed(GuestVA{ address }, length, prot, "guest-mmap", true) :
-		ctx.memory.mapAnonymous(length, prot, "guest-mmap");
+		ctx.memory.mapFixed(GuestVA{ address }, length, prot, name, true) :
+		ctx.memory.mapAnonymous(length, prot, name);
 	if (!mapped.ok()) {
 		return toErrno(mapped.error());
+	}
+	if (file != nullptr) {
+		const int64_t filled = fillFileMapping(ctx, *file, mapped.value(), length, file_offset);
+		if (filled != 0) {
+			return filled;
+		}
 	}
 	return static_cast<int64_t>(mapped.value().value());
 }

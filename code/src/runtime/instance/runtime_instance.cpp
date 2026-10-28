@@ -9,6 +9,7 @@
 #include "runtime/observer/trace/svc_trace.hpp"
 #include "runtime/threads/scheduler.hpp"
 #include "runtime/threads/tls/tls_manager.hpp"
+#include "runtime/vfs/virtual_file_system.hpp"
 
 namespace duckemu::runtime
 {
@@ -37,6 +38,8 @@ struct RuntimeInstance::Impl
 	std::unique_ptr<ThunkTable> thunks;
 	std::unique_ptr<loader::BionicGlobals> bionic_globals;
 	std::unique_ptr<loader::ModuleLoader> modules;
+	// Files outlive the modules whose names they resolve (/proc/self/maps).
+	std::unique_ptr<vfs::VirtualFileSystem> files;
 	std::unique_ptr<tls::TlsManager> tls;
 	// Co-owned with the bus listener that writes to it: the listener captures
 	// a shared_ptr, so the file outlives any Impl member regardless of
@@ -129,6 +132,30 @@ Result<std::unique_ptr<RuntimeInstance> > RuntimeInstance::create(const RuntimeC
 		config.enable_test_import_stubs);
 	impl->modules->setBionicGlobals(impl->bionic_globals.get());
 
+	vfs::VfsConfig vfs_config;
+	vfs_config.pid = config.pid;
+	vfs_config.tid = config.tid;
+	vfs_config.progname = "duckemu";
+	vfs_config.host_roots = config.filesystem_roots;
+	impl->files =
+		std::make_unique<vfs::VirtualFileSystem>(impl->memory, std::move(vfs_config));
+	impl->files->setAuxvProvider([globals = impl->bionic_globals.get()] {
+		return Result<std::pair<GuestVA, uint64_t> >(
+			std::make_pair(globals->auxvAddress(), globals->auxvSize()));
+	});
+	impl->files->setRegionNameResolver([registry = &impl->modules->registry()](std::string_view name) {
+		constexpr std::string_view prefix = "module:";
+		if (name.rfind(prefix, 0) == 0)
+		{
+			const loader::Module *module = registry->findBySoname(name.substr(prefix.size()));
+			if (module != nullptr)
+			{
+				return module->path;
+			}
+		}
+		return std::string(name);
+	});
+
 	impl->tls = std::make_unique<tls::TlsManager>(impl->memory);
 	auto tls_instance = impl->tls->create(config.tid, config.pid, impl->stack_top);
 	if (!tls_instance.ok()) {
@@ -160,12 +187,16 @@ Result<std::unique_ptr<RuntimeInstance> > RuntimeInstance::create(const RuntimeC
 	scheduler_config.default_timeout_us = config.default_timeout_us;
 	scheduler_config.record_memory_access = config.record_memory_access;
 	scheduler_config.diagnostic_capacity = config.diagnostic_capacity;
+	scheduler_config.vfs = impl->files.get();
 
 	impl->scheduler = std::make_unique<threads::ThreadScheduler>(
 		impl->memory, *impl->backend, *impl->thunks, *impl->events, scheduler_config);
 	if (auto started = impl->scheduler->start(); !started.ok()) {
 		return started.error();
 	}
+	impl->files->setThreadCountProvider([scheduler = impl->scheduler.get()] {
+		return static_cast<uint64_t>(scheduler->liveThreadCount());
+	});
 
 	if (!config.trace_path.empty()) {
 		auto trace = observer::SvcTraceFile::open(config.trace_path);

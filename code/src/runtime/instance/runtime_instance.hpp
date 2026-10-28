@@ -35,6 +35,11 @@ struct RuntimeConfig
 	// directory of the requesting module is always searched first.
 	std::vector<std::string> library_search_paths;
 
+	// Host directories exposed to guest file syscalls, read-only. Each root
+	// represents guest "/" (so a root holding `system/lib64/libc.so` answers
+	// /system/lib64/libc.so). Empty means only /proc is readable.
+	std::vector<std::string> filesystem_roots;
+
 	// Re-enables the M4 fixture virtual table (libc/liblog stubs). Off in
 	// production; 04_so_load turns it on to keep testing the thunk path.
 	bool enable_test_import_stubs = false;

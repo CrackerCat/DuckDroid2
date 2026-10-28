@@ -209,6 +209,9 @@ Result<void> BionicGlobals::initialize()
 		return written.error();
 	}
 
+	auxv_address_ = GuestVA{ auxv_address.value() };
+	auxv_size_ = auxv.size() * sizeof(uint64_t);
+
 	if (auto written = writeU64(kAuxvOffset, auxv_address.value()); !written.ok())
 	{
 		return written;

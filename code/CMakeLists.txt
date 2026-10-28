@@ -77,6 +77,10 @@ add_library(duckemu_runtime STATIC
   src/runtime/memory/address_space.cpp
   src/runtime/memory/thunk/thunk_table.cpp
   src/runtime/vfs/runtime_vfs.cpp
+  src/runtime/vfs/file.cpp
+  src/runtime/vfs/fd_table.cpp
+  src/runtime/vfs/proc_fs.cpp
+  src/runtime/vfs/virtual_file_system.cpp
   src/runtime/backend/unicorn/unicorn_engine.cpp
   src/runtime/backend/unicorn/unicorn_backend.cpp
   src/runtime/backend/unicorn/unicorn_hooks.cpp
