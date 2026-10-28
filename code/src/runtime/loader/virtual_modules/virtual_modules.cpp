@@ -1,6 +1,7 @@
 #include "runtime/loader/virtual_modules/virtual_modules.hpp"
 
 #include <cstring>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <utility>
@@ -16,7 +17,6 @@ namespace
 {
 
 constexpr int64_t kEbadf = 9;
-constexpr int64_t kEnomem = 12;
 constexpr int64_t kEfault = 14;
 constexpr int64_t kEinval = 22;
 
@@ -30,9 +30,31 @@ struct VirtualEntry
 	std::string_view symbol;
 };
 
-// The M4 surface. A symbol that is not here is reported unresolved; the error
-// names it, which is what a north-star load will need first.
-constexpr VirtualEntry kEntries[] = {
+// Symbols a real Android linker exports from ld-android.so. M4.5 only needs
+// the slots to bind; the implementations return 0 and M4.6 replaces the ones
+// that carry state (__loader_shared_globals).
+constexpr VirtualEntry kLinkerEntries[] = {
+	{ "ld-android.so", "__loader_dlopen" },
+	{ "ld-android.so", "__loader_dlsym" },
+	{ "ld-android.so", "__loader_dlvsym" },
+	{ "ld-android.so", "__loader_dlerror" },
+	{ "ld-android.so", "__loader_dladdr" },
+	{ "ld-android.so", "__loader_dlclose" },
+	{ "ld-android.so", "__loader_dl_iterate_phdr" },
+	{ "ld-android.so", "__loader_android_dlopen_ext" },
+	{ "ld-android.so", "__loader_android_get_application_target_sdk_version" },
+	{ "ld-android.so", "__loader_android_get_LD_LIBRARY_PATH" },
+	{ "ld-android.so", "__loader_android_handle_signal" },
+	{ "ld-android.so", "__loader_cfi_fail" },
+	{ "ld-android.so", "__loader_shared_globals" },
+	{ "ld-android.so", "__loader_add_thread_local_dtor" },
+	{ "ld-android.so", "__loader_remove_thread_local_dtor" },
+	{ "ld-android.so", "__loader_android_get_exported_namespace" },
+};
+
+// M4's fixture table. Production keeps it disabled: these names now come from
+// the real libc.so/liblog.so loaded from disk.
+constexpr VirtualEntry kTestEntries[] = {
 	{ "libc.so", "__errno" },
 	{ "libc.so", "write" },
 	{ "libc.so", "malloc" },
@@ -51,19 +73,52 @@ struct MallocState
 	uint64_t size = 0;
 };
 
+bool matches(const VirtualEntry *entries, size_t count, std::string_view module, std::string_view symbol)
+{
+	for (size_t i = 0; i < count; ++i)
+	{
+		if (entries[i].module == module && entries[i].symbol == symbol)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+bool matchesAny(const VirtualEntry *entries, size_t count, std::string_view symbol)
+{
+	for (size_t i = 0; i < count; ++i)
+	{
+		if (entries[i].symbol == symbol)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
 } // namespace
 
-VirtualBionic::VirtualBionic(RuntimeMemory &memory, ThunkTable &thunks)
+VirtualBionic::VirtualBionic(RuntimeMemory &memory, ThunkTable &thunks, bool enable_test_import_stubs)
 	: memory_(memory)
 	, thunks_(thunks)
+	, test_stubs_(enable_test_import_stubs)
 {
 }
 
-bool VirtualBionic::isVirtualModule(std::string_view soname) noexcept
+bool VirtualBionic::isVirtualModule(std::string_view soname) const noexcept
 {
-	for (const std::string_view name : moduleNames())
+	if (soname == "ld-android.so")
 	{
-		if (name == soname)
+		return true;
+	}
+	if (!test_stubs_)
+	{
+		return false;
+	}
+	for (const VirtualEntry &entry : kTestEntries)
+	{
+		if (entry.module == soname)
 		{
 			return true;
 		}
@@ -71,33 +126,22 @@ bool VirtualBionic::isVirtualModule(std::string_view soname) noexcept
 	return false;
 }
 
-std::vector<std::string_view> VirtualBionic::moduleNames()
+bool VirtualBionic::declares(std::string_view module_soname, std::string_view symbol) const noexcept
 {
-	return { "libc.so", "liblog.so", "libdl.so", "libm.so" };
+	if (matches(kLinkerEntries, std::size(kLinkerEntries), module_soname, symbol))
+	{
+		return true;
+	}
+	return test_stubs_ && matches(kTestEntries, std::size(kTestEntries), module_soname, symbol);
 }
 
-bool VirtualBionic::declares(std::string_view module_soname, std::string_view symbol) noexcept
+bool VirtualBionic::declaresAny(std::string_view symbol) const noexcept
 {
-	for (const VirtualEntry &entry : kEntries)
+	if (matchesAny(kLinkerEntries, std::size(kLinkerEntries), symbol))
 	{
-		if (entry.module == module_soname && entry.symbol == symbol)
-		{
-			return true;
-		}
+		return true;
 	}
-	return false;
-}
-
-bool VirtualBionic::declaresAny(std::string_view symbol) noexcept
-{
-	for (const VirtualEntry &entry : kEntries)
-	{
-		if (entry.symbol == symbol)
-		{
-			return true;
-		}
-	}
-	return false;
+	return test_stubs_ && matchesAny(kTestEntries, std::size(kTestEntries), symbol);
 }
 
 namespace
@@ -120,6 +164,13 @@ GuestVA errnoAddress(RuntimeMemory &memory, uint64_t thread_pointer)
 
 Result<HostStub> VirtualBionic::makeStub(std::string_view symbol)
 {
+	// ld-android.so: binding-only stubs. Returning 0 is safe for load; any
+	// symbol that needs real behaviour is picked up in M4.6.
+	if (matchesAny(kLinkerEntries, std::size(kLinkerEntries), symbol))
+	{
+		return HostStub{ [](HostCallArgs &) -> int64_t { return 0; } };
+	}
+
 	if (symbol == "__errno")
 	{
 		// Captures the memory reference only: the thunk table outlives this

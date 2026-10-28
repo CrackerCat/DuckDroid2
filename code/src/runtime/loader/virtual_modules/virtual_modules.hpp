@@ -1,10 +1,8 @@
 #pragma once
 
-#include <array>
-#include <cstdint>
-#include <functional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "common/error/result.hpp"
@@ -19,28 +17,29 @@ class RuntimeMemory;
 namespace duckemu::runtime::loader
 {
 
-// Host implementations behind a virtual bionic module. A module that imports
-// `write` gets the thunk page entry created here; nothing is read from disk.
+// Host implementations behind the virtual modules. Production only virtualizes
+// what a real Android linker provides (ld-android.so); the modules that real
+// bionic supplies from disk (libc/libm/libdl/liblog/...) are loaded from files.
 //
-// M4 only implements the symbols the gate needs. Everything else is reported
-// as unresolved with the symbol name, which is what a real target would hit.
+// `enable_test_import_stubs` re-enables the M4 fixture table (libc/liblog
+// stubs). It exists so 04_so_load keeps testing the thunk path without pulling
+// real libc into that test; the M4.5 gate leaves it off.
 class VirtualBionic
 {
     public:
-	explicit VirtualBionic(RuntimeMemory &memory, ThunkTable &thunks);
+	explicit VirtualBionic(RuntimeMemory &memory,
+		ThunkTable &thunks,
+		bool enable_test_import_stubs = false);
 
 	// True for the module names that are satisfied without a file.
-	static bool isVirtualModule(std::string_view soname) noexcept;
-
-	// Names of the virtual modules this build knows.
-	static std::vector<std::string_view> moduleNames();
+	[[nodiscard]] bool isVirtualModule(std::string_view soname) const noexcept;
 
 	// Does `module_soname` declare `symbol`? Membership only; use resolve()
 	// to get an address.
-	static bool declares(std::string_view module_soname, std::string_view symbol) noexcept;
+	[[nodiscard]] bool declares(std::string_view module_soname, std::string_view symbol) const noexcept;
 
-	// True when any virtual module declares `symbol`.
-	static bool declaresAny(std::string_view symbol) noexcept;
+	// True when any enabled virtual module declares `symbol`.
+	[[nodiscard]] bool declaresAny(std::string_view symbol) const noexcept;
 
 	// Creates (once) the thunk that implements `symbol`.
 	Result<GuestVA> resolve(std::string_view symbol);
@@ -54,6 +53,7 @@ class VirtualBionic
     private:
 	RuntimeMemory &memory_;
 	ThunkTable &thunks_;
+	bool test_stubs_;
 	std::vector<std::pair<std::string, GuestVA> > thunks_by_name_;
 
 	Result<HostStub> makeStub(std::string_view symbol);

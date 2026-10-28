@@ -17,7 +17,8 @@ using namespace android13;
 constexpr uint64_t kDtvOffset = 0x100;
 constexpr uint64_t kBionicTlsOffset = 0x200;
 constexpr uint64_t kThreadOffset = 0x3200;
-constexpr uint64_t kRegionSize = 0x4000;
+// Module static TLS segments are appended from 0x4000 (loader/tls/tls_layout.hpp).
+constexpr uint64_t kRegionSize = 0x10000;
 
 GuestVA slotAddress(GuestVA thread_pointer, int slot)
 {
@@ -119,6 +120,30 @@ Result<TlsInstance> TlsManager::create(uint32_t tid, uint32_t pid, uint64_t stac
 		static_cast<unsigned long long>(instance.pthread_internal.value()),
 		static_cast<unsigned long long>(instance.bionic_tls.value()));
 	return instance;
+}
+
+Result<void> TlsManager::materialize(int64_t tls_offset, const void *data, uint64_t size, uint64_t memsz)
+{
+	if (main_.region_base.value() == 0)
+	{
+		return Error{ ErrorCode::Internal, "TLS instance is not initialized" };
+	}
+	if (tls_offset < 0 || size > memsz)
+	{
+		return Error{ ErrorCode::InvalidArgument, "invalid module TLS range" };
+	}
+
+	const uint64_t start = main_.thread_pointer.value() + static_cast<uint64_t>(tls_offset);
+	const uint64_t region_end = main_.region_base.value() + kRegionSize;
+	if (start < main_.region_base.value() || start > region_end || memsz > region_end - start)
+	{
+		return Error{ ErrorCode::InvalidArgument, "module TLS range exceeds the thread block" };
+	}
+	if (size == 0)
+	{
+		return {};
+	}
+	return memory_.write(GuestVA{ start }, data, size);
 }
 
 Result<void> TlsManager::setErrno(int32_t value)

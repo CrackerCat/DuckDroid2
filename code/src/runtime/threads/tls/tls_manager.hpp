@@ -44,6 +44,16 @@ class TlsManager
 	// __errno() is &__get_thread()->errno_value on arm64.
 	Result<void> setErrno(int32_t value);
 
+	// Copies a module's PT_TLS image into the main thread's block at the
+	// loader-assigned TP-relative offset. The memsz tail is left zero (fresh
+	// mapping). M4.5 only materializes the main thread.
+	Result<void> materialize(int64_t tls_offset, const void *data, uint64_t size, uint64_t memsz);
+
+	[[nodiscard]] GuestVA regionBase() const
+	{
+		return main_.region_base;
+	}
+
     private:
 	static uint64_t makeStackGuard();
 

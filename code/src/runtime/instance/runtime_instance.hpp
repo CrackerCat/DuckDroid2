@@ -34,6 +34,15 @@ struct RuntimeConfig
 	// Loader search path for DT_NEEDED names that are not virtual modules. The
 	// directory of the requesting module is always searched first.
 	std::vector<std::string> library_search_paths;
+
+	// Re-enables the M4 fixture virtual table (libc/liblog stubs). Off in
+	// production; 04_so_load turns it on to keep testing the thunk path.
+	bool enable_test_import_stubs = false;
+
+	// Run DT_INIT/DT_INIT_ARRAY after loadLibrary. M4.5's gate turns this off:
+	// real libc constructors are M4.6 work. When off, pending initializers are
+	// discarded (not run later).
+	bool run_module_initializers = true;
 };
 
 // The single facade over one guest world. M1 owns one host thread and one

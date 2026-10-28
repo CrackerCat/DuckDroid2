@@ -15,6 +15,8 @@ namespace
 {
 
 constexpr uint32_t kBranchToSelf = 0x14000000u; // b .
+// bionic_call_ifunc_resolver.cpp passes (HWCAP | _IFUNC_ARG_HWCAP, &arg).
+constexpr uint64_t kIfuncHwcap = 1ULL << 62;
 
 } // namespace
 
@@ -42,7 +44,28 @@ struct RuntimeInstance::Impl
 	GuestVA stack_base;
 	uint64_t stack_top = 0;
 	GuestVA return_trap;
+	GuestVA ifunc_arg; // guest __ifunc_arg_t, allocated on first IFUNC resolution
 	State state = State::Created;
+
+	Result<void> ensureIfuncArg()
+	{
+		if (ifunc_arg.value() != 0) {
+			return {};
+		}
+		auto page = memory.map(kGuestPageSize, PermReadWrite, "ifunc-arg");
+		if (!page.ok()) {
+			return page.error();
+		}
+		// __ifunc_arg_t { size, hwcap, hwcap2 }; the guest CPU advertises no
+		// optional extensions, so both hwcaps stay zero.
+		const uint64_t arg[3] = { 3 * sizeof(uint64_t), 0, 0 };
+		auto written = memory.write(page.value(), arg, sizeof(arg));
+		if (!written.ok()) {
+			return written.error();
+		}
+		ifunc_arg = page.value();
+		return {};
+	}
 
 	// Declared last: the scheduler references every member above and must be
 	// destroyed first so its host threads are joined while the rest is alive.
@@ -87,14 +110,23 @@ Result<std::unique_ptr<RuntimeInstance> > RuntimeInstance::create(const RuntimeC
 	}
 	impl->thunks = std::move(thunks).value();
 
-	impl->modules = std::make_unique<loader::ModuleLoader>(
-		impl->memory, *impl->thunks, impl->events.get(), config.library_search_paths);
+	impl->modules = std::make_unique<loader::ModuleLoader>(impl->memory,
+		*impl->thunks,
+		impl->events.get(),
+		config.library_search_paths,
+		config.enable_test_import_stubs);
 
 	impl->tls = std::make_unique<tls::TlsManager>(impl->memory);
 	auto tls_instance = impl->tls->create(config.tid, config.pid, impl->stack_top);
 	if (!tls_instance.ok()) {
 		return tls_instance.error();
 	}
+
+	tls::TlsManager *tls_manager = impl->tls.get();
+	impl->modules->setTlsTemplateSink(
+		[tls_manager](int64_t tls_offset, const void *data, uint64_t size, uint64_t memsz) {
+			return tls_manager->materialize(tls_offset, data, size, memsz);
+		});
 
 	auto trap = impl->memory.map(kGuestPageSize, PermRead | PermExec, "return-trap");
 	if (!trap.ok()) {
@@ -165,6 +197,7 @@ Result<uint64_t> RuntimeInstance::loadLibrary(std::string_view path)
 	}
 
 	uint64_t handle = 0;
+	std::vector<loader::IfuncFixup> ifunc_fixups;
 	{
 		// Mapping and relocation must not race a running engine; constructors
 		// must not run while this thread holds the execution lock (the main
@@ -177,12 +210,53 @@ Result<uint64_t> RuntimeInstance::loadLibrary(std::string_view path)
 			// Dependencies that did load keep their constructors pending; they
 			// are discarded rather than run against a half-loaded graph.
 			(void)impl_->modules->takeInitializers();
+			(void)impl_->modules->takeIfuncFixups();
 			return loaded.error();
 		}
 		handle = loaded.value();
+		ifunc_fixups = impl_->modules->takeIfuncFixups();
+		if (!ifunc_fixups.empty())
+		{
+			if (auto ensured = impl_->ensureIfuncArg(); !ensured.ok())
+			{
+				return ensured.error();
+			}
+		}
+	}
+
+	// IFUNC resolvers are guest code. They cannot run while this thread holds
+	// the execution lock, so they run here, on the main guest thread, and the
+	// resulting addresses are patched back under the lock.
+	for (const loader::IfuncFixup &fixup : ifunc_fixups)
+	{
+		const std::array<uint64_t, 8> args = { kIfuncHwcap, impl_->ifunc_arg.value() };
+		auto call = impl_->scheduler->callFunction(fixup.resolver, args);
+		if (!call.ok())
+		{
+			if (call.error().code == ErrorCode::EmulationFault)
+			{
+				impl_->state = Impl::State::Faulted;
+			}
+			return call.error();
+		}
+		if (call.value().exit_code.has_value())
+		{
+			return Error{ ErrorCode::Unsupported, "an IFUNC resolver called exit_group" };
+		}
+		uint64_t value = call.value().return_value;
+		auto execution = impl_->scheduler->lockExecution();
+		auto written = impl_->memory.write(fixup.place, &value, sizeof(value));
+		if (!written.ok())
+		{
+			return written.error();
+		}
 	}
 
 	const std::vector<loader::Initializer> initializers = impl_->modules->takeInitializers();
+	if (!impl_->config.run_module_initializers)
+	{
+		return handle;
+	}
 	for (const loader::Initializer &initializer : initializers)
 	{
 		auto call = impl_->scheduler->callFunction(initializer.function, {});

@@ -2,7 +2,6 @@
 
 #include <deque>
 #include <unordered_set>
-#include <vector>
 
 namespace duckemu::runtime::loader
 {
@@ -11,6 +10,7 @@ namespace
 
 constexpr uint8_t kStbGlobal = 1;
 constexpr uint8_t kStbWeak = 2;
+constexpr uint8_t kSttTls = 6;
 
 } // namespace
 
@@ -20,14 +20,14 @@ SymbolResolver::SymbolResolver(ModuleRegistry &registry, VirtualBionic &virtuals
 {
 }
 
-bool SymbolResolver::findDefined(const Module &module, std::string_view name, GuestVA &address)
+const ElfSymbol *SymbolResolver::findDefinition(const Module &module, std::string_view name)
 {
 	if (module.is_virtual)
 	{
-		return false;
+		return nullptr;
 	}
 
-	bool found_weak = false;
+	const ElfSymbol *weak = nullptr;
 	for (const ElfSymbol &symbol : module.symbols)
 	{
 		if (symbol.name != name || symbol.undefined() || symbol.name.empty())
@@ -35,40 +35,40 @@ bool SymbolResolver::findDefined(const Module &module, std::string_view name, Gu
 			continue;
 		}
 		const uint8_t bind = symbol.bind();
-		if (bind != kStbGlobal && bind != kStbWeak)
+		if (bind == kStbGlobal)
 		{
-			continue;
+			return &symbol;
 		}
-		if (bind == kStbWeak)
+		if (bind == kStbWeak && weak == nullptr)
 		{
-			found_weak = true;
-			continue;
+			weak = &symbol;
 		}
-		address = GuestVA{ module.base + symbol.value };
-		return true;
 	}
-	if (found_weak)
+	return weak;
+}
+
+bool SymbolResolver::findDefined(const Module &module, std::string_view name, GuestVA &address)
+{
+	const ElfSymbol *symbol = findDefinition(module, name);
+	if (symbol == nullptr)
 	{
-		for (const ElfSymbol &symbol : module.symbols)
-		{
-			if (symbol.name == name && !symbol.undefined() && symbol.bind() == kStbWeak)
-			{
-				address = GuestVA{ module.base + symbol.value };
-				return true;
-			}
-		}
+		return false;
 	}
-	return false;
+	address = GuestVA{ module.base + symbol->value };
+	return true;
 }
 
 Result<ResolvedSymbol> SymbolResolver::resolve(const Module &requester,
 	std::string_view name,
 	bool weak_reference) const
 {
-	GuestVA address;
-	if (findDefined(requester, name, address))
+	if (const ElfSymbol *symbol = findDefinition(requester, name))
 	{
-		return ResolvedSymbol{ address, const_cast<Module *>(&requester), false };
+		return ResolvedSymbol{ GuestVA{ requester.base + symbol->value },
+			const_cast<Module *>(&requester),
+			false,
+			symbol->type(),
+			symbol->value };
 	}
 
 	// DT_NEEDED closure, breadth first, in load order.
@@ -89,9 +89,13 @@ Result<ResolvedSymbol> SymbolResolver::resolve(const Module &requester,
 	{
 		const Module *module = queue.front();
 		queue.pop_front();
-		if (findDefined(*module, name, address))
+		if (const ElfSymbol *symbol = findDefinition(*module, name))
 		{
-			return ResolvedSymbol{ address, const_cast<Module *>(module), false };
+			return ResolvedSymbol{ GuestVA{ module->base + symbol->value },
+				const_cast<Module *>(module),
+				false,
+				symbol->type(),
+				symbol->value };
 		}
 		for (const std::string &needed : module->needed)
 		{
@@ -112,38 +116,121 @@ Result<ResolvedSymbol> SymbolResolver::resolve(const Module &requester,
 		{
 			continue;
 		}
-		if (findDefined(*module, name, address))
+		if (const ElfSymbol *symbol = findDefinition(*module, name))
 		{
-			return ResolvedSymbol{ address, module.get(), false };
+			return ResolvedSymbol{ GuestVA{ module->base + symbol->value },
+				module.get(),
+				false,
+				symbol->type(),
+				symbol->value };
 		}
 	}
 
-	// Virtual bionic. Membership is checked by name; the thunk is created on
-	// first use and cached inside VirtualBionic.
-	if (VirtualBionic::declaresAny(name))
+	// Virtual import table. Membership is checked by name; the thunk is created
+	// on first use and cached inside VirtualBionic.
+	if (virtuals_.declaresAny(name))
 	{
 		auto thunk = virtuals_.resolve(name);
 		if (!thunk.ok())
 		{
 			return thunk.error();
 		}
-		return ResolvedSymbol{ thunk.value(), nullptr, true };
+		return ResolvedSymbol{ thunk.value(), nullptr, true, 0, 0 };
 	}
 
 	if (weak_reference)
 	{
-		return ResolvedSymbol{ GuestVA{}, nullptr, false };
+		return ResolvedSymbol{ GuestVA{}, nullptr, false, 0, 0 };
 	}
 
 	std::string message = "undefined symbol '" + std::string(name) + "' referenced by " + requester.soname;
 	return Error{ ErrorCode::NotFound, std::move(message) };
 }
 
+Result<ResolvedTlsSymbol> SymbolResolver::resolveTls(const Module &requester,
+	std::string_view name,
+	bool weak_reference) const
+{
+	auto fromModule = [&](const Module &module, const ElfSymbol &symbol) -> Result<ResolvedTlsSymbol> {
+		if (symbol.type() != kSttTls)
+		{
+			return Error{ ErrorCode::InvalidArgument,
+				module.soname + ": TLS relocation references non-TLS symbol '" +
+					std::string(name) + "'" };
+		}
+		if (!module.has_tls)
+		{
+			return Error{ ErrorCode::InvalidArgument,
+				module.soname + ": TLS symbol '" + std::string(name) +
+					"' is defined in a module without PT_TLS" };
+		}
+		return ResolvedTlsSymbol{ &module, symbol.value, false };
+	};
+
+	if (const ElfSymbol *symbol = findDefinition(requester, name))
+	{
+		return fromModule(requester, *symbol);
+	}
+
+	std::unordered_set<std::string> visited;
+	std::deque<const Module *> queue;
+	visited.insert(requester.soname);
+	for (const std::string &needed : requester.needed)
+	{
+		if (Module *dependency = registry_.findBySoname(needed))
+		{
+			if (visited.insert(dependency->soname).second)
+			{
+				queue.push_back(dependency);
+			}
+		}
+	}
+	while (!queue.empty())
+	{
+		const Module *module = queue.front();
+		queue.pop_front();
+		if (const ElfSymbol *symbol = findDefinition(*module, name))
+		{
+			return fromModule(*module, *symbol);
+		}
+		for (const std::string &needed : module->needed)
+		{
+			if (Module *dependency = registry_.findBySoname(needed))
+			{
+				if (visited.insert(dependency->soname).second)
+				{
+					queue.push_back(dependency);
+				}
+			}
+		}
+	}
+
+	for (const auto &module : registry_.modules())
+	{
+		if (module->is_virtual || visited.count(module->soname) != 0)
+		{
+			continue;
+		}
+		if (const ElfSymbol *symbol = findDefinition(*module, name))
+		{
+			return fromModule(*module, *symbol);
+		}
+	}
+
+	if (weak_reference)
+	{
+		return ResolvedTlsSymbol{ nullptr, 0, true };
+	}
+
+	return Error{ ErrorCode::NotFound,
+		"undefined TLS symbol '" + std::string(name) + "' referenced by " + requester.soname };
+}
+
 Result<GuestVA> SymbolResolver::lookupExported(const Module &module, std::string_view name) const
 {
 	if (module.is_virtual)
 	{
-		if (!VirtualBionic::declares(module.soname, name) && !VirtualBionic::declaresAny(name))
+		if (!virtuals_.declares(module.soname, name) && !virtuals_.declaresAny(name))
 		{
 			return Error{ ErrorCode::NotFound,
 				"virtual module " + module.soname + " does not provide '" + std::string(name) + "'" };

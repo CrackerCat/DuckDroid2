@@ -118,6 +118,9 @@ int main() {
     config.tid = kTid;
     config.trace_path = test::tracePath("04_so_load.log");
     config.library_search_paths = { DUCKEMU_SO_DIR };
+    // M4 fixture: libc/liblog are satisfied by the test-only virtual table so
+    // the thunk path stays covered without loading real bionic.
+    config.enable_test_import_stubs = true;
 
     auto created = RuntimeInstance::create(config);
     CHECK_RESULT(created);

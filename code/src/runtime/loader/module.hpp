@@ -37,7 +37,9 @@ struct Module
 
 	ElfTlsTemplate tls;
 	bool has_tls = false;
-	uint64_t tls_offset = 0; // relative to the thread pointer
+	int64_t tls_offset = 0;        // relative to the thread pointer
+	uint32_t tls_module_id = 0;    // 1-based, for DTPMOD64 / DTV
+	bool tls_static = false;       // M4.5 treats every PT_TLS module as static
 
 	GuestVA init_function;
 	GuestVA init_array;

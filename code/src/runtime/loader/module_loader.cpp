@@ -45,13 +45,14 @@ uint32_t guestPermissions(uint32_t elf_flags)
 ModuleLoader::ModuleLoader(RuntimeMemory &memory,
 	ThunkTable &thunks,
 	observer::EventBus *events,
-	std::vector<std::string> search_paths)
+	std::vector<std::string> search_paths,
+	bool enable_test_import_stubs)
 	: memory_(memory)
 	, events_(events)
 	, vfs_(std::move(search_paths))
-	, virtuals_(memory, thunks)
+	, virtuals_(memory, thunks, enable_test_import_stubs)
 	, resolver_(registry_, virtuals_)
-	, relocations_(memory, resolver_, events)
+	, relocations_(memory, resolver_, events, ifunc_fixups_)
 	, next_base_(kModuleAreaBase)
 {
 }
@@ -138,6 +139,18 @@ Result<Module *> ModuleLoader::loadImage(const std::string &path, ElfImage parse
 	module.tls = elf.tls();
 	module.has_tls = elf.tls().present;
 
+	if (module.has_tls && module.tls.memsz != 0)
+	{
+		auto offset = tls_layout_.reserve(module.tls.memsz, module.tls.align);
+		if (!offset.ok())
+		{
+			return offset.error();
+		}
+		module.tls_offset = offset.value();
+		module.tls_module_id = next_tls_module_id_++;
+		module.tls_static = true;
+	}
+
 	if (auto mapped = mapSegments(module, elf); !mapped.ok())
 	{
 		return mapped.error();
@@ -155,11 +168,35 @@ Result<Module *> ModuleLoader::loadImage(const std::string &path, ElfImage parse
 		events_->publishModule(std::move(event));
 	}
 
+	// M4.5 does not execute guest code, but the initial thread block must
+	// already carry the module's TLS image for any later call.
+	if (registered.has_tls && tls_sink_ && registered.tls.filesz != 0)
+	{
+		const ElfTlsTemplate &tls = registered.tls;
+		if (tls.offset > elf.bytes().size() || tls.filesz > elf.bytes().size() - tls.offset)
+		{
+			unmapSegments(registered);
+			registry_.erase(registered.handle);
+			return Error{ ErrorCode::InvalidArgument,
+				registered.soname + ": PT_TLS image is out of bounds" };
+		}
+		auto materialized = tls_sink_(registered.tls_offset,
+			elf.bytes().data() + tls.offset,
+			tls.filesz,
+			tls.memsz);
+		if (!materialized.ok())
+		{
+			unmapSegments(registered);
+			registry_.erase(registered.handle);
+			return materialized.error();
+		}
+	}
+
 	for (const std::string &needed : registered.needed)
 	{
 		bool ok = false;
 		std::string detail;
-		if (VirtualBionic::isVirtualModule(needed))
+		if (virtuals_.isVirtualModule(needed))
 		{
 			auto virtual_module = loadVirtual(needed);
 			ok = virtual_module.ok();
@@ -395,6 +432,13 @@ std::vector<Initializer> ModuleLoader::takeInitializers()
 {
 	std::vector<Initializer> drained;
 	drained.swap(initializers_);
+	return drained;
+}
+
+std::vector<IfuncFixup> ModuleLoader::takeIfuncFixups()
+{
+	std::vector<IfuncFixup> drained;
+	drained.swap(ifunc_fixups_);
 	return drained;
 }
 

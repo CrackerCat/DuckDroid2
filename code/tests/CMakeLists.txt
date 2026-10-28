@@ -98,6 +98,15 @@ add_custom_command(
     COMMENT "Building guest .so liba.so")
 
 add_custom_command(
+    OUTPUT "${DUCKEMU_SO_BUILD_DIR}/libtls.so"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${DUCKEMU_SO_BUILD_DIR}"
+    COMMAND ${DUCKEMU_CLANG_EXECUTABLE} ${DUCKEMU_GUEST_SO_FLAGS}
+            -Wl,-soname,libtls.so "${DUCKEMU_SO_SOURCE_DIR}/libtls.c"
+            -o "${DUCKEMU_SO_BUILD_DIR}/libtls.so"
+    DEPENDS "${DUCKEMU_SO_SOURCE_DIR}/libtls.c"
+    COMMENT "Building guest .so libtls.so (TLSDESC)")
+
+add_custom_command(
     OUTPUT "${DUCKEMU_SO_BUILD_DIR}/libmissing.so"
     COMMAND ${DUCKEMU_CLANG_EXECUTABLE} ${DUCKEMU_GUEST_SO_FLAGS}
             -Wl,-soname,libmissing.so "${DUCKEMU_SO_SOURCE_DIR}/libmissing.c"
@@ -116,6 +125,7 @@ add_custom_command(
     OUTPUT "${DUCKEMU_SO_RUNTIME_DIR}/liba.so"
            "${DUCKEMU_SO_RUNTIME_DIR}/libb.so"
            "${DUCKEMU_SO_RUNTIME_DIR}/libmissing.so"
+           "${DUCKEMU_SO_RUNTIME_DIR}/libtls.so"
     COMMAND ${CMAKE_COMMAND} -E make_directory "${DUCKEMU_SO_RUNTIME_DIR}"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${DUCKEMU_SO_BUILD_DIR}/liba.so" "${DUCKEMU_SO_RUNTIME_DIR}/liba.so"
@@ -123,14 +133,18 @@ add_custom_command(
             "${DUCKEMU_SO_BUILD_DIR}/libb.so" "${DUCKEMU_SO_RUNTIME_DIR}/libb.so"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${DUCKEMU_SO_BUILD_DIR}/libmissing.so" "${DUCKEMU_SO_RUNTIME_DIR}/libmissing.so"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${DUCKEMU_SO_BUILD_DIR}/libtls.so" "${DUCKEMU_SO_RUNTIME_DIR}/libtls.so"
     DEPENDS "${DUCKEMU_SO_BUILD_DIR}/liba.so"
             "${DUCKEMU_SO_BUILD_DIR}/libb.so"
-            "${DUCKEMU_SO_BUILD_DIR}/libmissing.so")
+            "${DUCKEMU_SO_BUILD_DIR}/libmissing.so"
+            "${DUCKEMU_SO_BUILD_DIR}/libtls.so")
 
 add_custom_target(guest_so ALL
     DEPENDS "${DUCKEMU_SO_RUNTIME_DIR}/liba.so"
             "${DUCKEMU_SO_RUNTIME_DIR}/libb.so"
-            "${DUCKEMU_SO_RUNTIME_DIR}/libmissing.so")
+            "${DUCKEMU_SO_RUNTIME_DIR}/libmissing.so"
+            "${DUCKEMU_SO_RUNTIME_DIR}/libtls.so")
 
 # ---------------------------------------------------------------------------
 # Test support
@@ -174,6 +188,37 @@ function(duckemu_add_loader_test name)
 endfunction()
 
 duckemu_add_loader_test(04_so_load)
+duckemu_add_loader_test(04b_tlsdesc)
+
+# ---------------------------------------------------------------------------
+# M4.5 gate: real bionic from the local Android environment.
+#
+# Paths are cache variables so another machine can point them elsewhere; the
+# defaults match this workspace's layout. The test fails loudly when an asset
+# is missing rather than silently skipping.
+# ---------------------------------------------------------------------------
+set(DUCKEMU_ANDROID_ENV_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../.."
+    CACHE PATH "Root of the Android environment (contains DuckEmu/ and ROM/)")
+set(DUCKEMU_BIONIC_DIR "${DUCKEMU_ANDROID_ENV_ROOT}/DuckEmu/bionic"
+    CACHE PATH "Directory with the Android 13/14 libc/libm/libdl sample")
+set(DUCKEMU_ROM_LIB64
+    "${DUCKEMU_ANDROID_ENV_ROOT}/ROM/out/target/product/lemonade/symbols/system/lib64"
+    CACHE PATH "ROM system/lib64 (libz/liblog/libc++)")
+set(DUCKEMU_SGMAIN_SO
+    "${DUCKEMU_ANDROID_ENV_ROOT}/DuckDroid/code/user_code/DaMai/ida/libsgmainso-6.8.260704.so"
+    CACHE FILEPATH "libsgmainso sample with damaged section headers")
+
+add_executable(04b_libc_map integration/04b_libc_map.cpp)
+target_link_libraries(04b_libc_map PRIVATE duckemu_runtime duckemu_test_support)
+target_compile_definitions(04b_libc_map PRIVATE
+  DUCKEMU_TRACE_DIR="${CMAKE_CURRENT_BINARY_DIR}/traces"
+  DUCKEMU_BIONIC_DIR="${DUCKEMU_BIONIC_DIR}"
+  DUCKEMU_ROM_LIB64="${DUCKEMU_ROM_LIB64}"
+  DUCKEMU_ROM_BOOTSTRAP="${DUCKEMU_ROM_LIB64}/bootstrap"
+  DUCKEMU_SGMAIN_SO="${DUCKEMU_SGMAIN_SO}")
+add_test(NAME 04b_libc_map COMMAND 04b_libc_map)
+set_tests_properties(04b_libc_map PROPERTIES TIMEOUT 120)
+duckemu_set_warnings(04b_libc_map)
 
 add_executable(elf_image_test unit/runtime/loader/elf_image_test.cpp)
 target_link_libraries(elf_image_test PRIVATE duckemu_runtime duckemu_test_support)
