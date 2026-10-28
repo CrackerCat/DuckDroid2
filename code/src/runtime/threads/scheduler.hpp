@@ -90,6 +90,10 @@ class ThreadScheduler final : public ThreadSystem
 	{
 		return stopping_.load(std::memory_order_acquire);
 	}
+	[[nodiscard]] GuestVA returnTrap() const override
+	{
+		return config_.return_trap;
+	}
 
     private:
 	void hostThreadLoop(RuntimeThread &thread);

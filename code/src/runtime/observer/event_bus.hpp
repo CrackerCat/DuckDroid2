@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "runtime/observer/semantic/memory_event.hpp"
+#include "runtime/observer/semantic/module_event.hpp"
 #include "runtime/observer/semantic/svc_event.hpp"
 #include "runtime/observer/semantic/thread_event.hpp"
 
@@ -28,6 +29,7 @@ class EventBus
 	using SvcListener = std::function<void(const SvcEvent &)>;
 	using MemoryListener = std::function<void(const MemoryEvent &)>;
 	using ThreadListener = std::function<void(const ThreadEvent &)>;
+	using ModuleListener = std::function<void(const ModuleEvent &)>;
 
 	EventBus() = default;
 
@@ -37,11 +39,15 @@ class EventBus
 	bool removeMemoryListener(uint32_t id);
 	uint32_t addThreadListener(ThreadListener listener);
 	bool removeThreadListener(uint32_t id);
+	uint32_t addModuleListener(ModuleListener listener);
+	bool removeModuleListener(uint32_t id);
 
 	void publishSvc(const SvcEvent &event);
 	void publishMemory(const MemoryEvent &event);
 	// Assigns ThreadEvent::id (publication order) before delivering.
 	void publishThread(ThreadEvent event);
+	// Assigns ModuleEvent::id (publication order) before delivering.
+	void publishModule(ModuleEvent event);
 
 	// True while a listener is being invoked on *this* thread. Listeners run
 	// inside the Unicorn hook, so starting the engine again from one would nest
@@ -57,8 +63,10 @@ class EventBus
 	std::vector<std::pair<uint32_t, SvcListener> > svc_listeners_;
 	std::vector<std::pair<uint32_t, MemoryListener> > memory_listeners_;
 	std::vector<std::pair<uint32_t, ThreadListener> > thread_listeners_;
+	std::vector<std::pair<uint32_t, ModuleListener> > module_listeners_;
 	uint32_t next_listener_id_ = 1;
 	uint64_t next_thread_event_id_ = 0;
+	uint64_t next_module_event_id_ = 0;
 };
 
 } // namespace duckemu::runtime::observer

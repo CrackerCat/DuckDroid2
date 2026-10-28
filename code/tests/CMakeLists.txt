@@ -42,6 +42,97 @@ add_custom_target(guest_blobs ALL
           ${BLOB_STACK_DUMP} ${BLOB_PTHREAD_JOIN})
 
 # ---------------------------------------------------------------------------
+# Guest shared objects for the M4 loader gate. Built for aarch64-linux-android
+# with -nostdlib, so every libc import stays UND and the loader has to satisfy
+# it from the virtual bionic table.
+#
+# --pack-dyn-relocs=none keeps the output in plain RELA form; aarch64-android
+# defaults to DT_ANDROID_RELA (APS2), which the M4 loader refuses on purpose.
+# ---------------------------------------------------------------------------
+set(DUCKEMU_SO_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/so")
+set(DUCKEMU_SO_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/so-build")
+set(DUCKEMU_SO_RUNTIME_DIR "${CMAKE_CURRENT_BINARY_DIR}/so-runtime")
+
+set(DUCKEMU_GUEST_SO_FLAGS
+    --target=aarch64-linux-android31 -fPIC -shared -nostdlib -O1
+    -Wl,--pack-dyn-relocs=none)
+
+add_custom_command(
+    OUTPUT "${DUCKEMU_SO_BUILD_DIR}/libb.so"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${DUCKEMU_SO_BUILD_DIR}"
+    COMMAND ${DUCKEMU_CLANG_EXECUTABLE} ${DUCKEMU_GUEST_SO_FLAGS}
+            -Wl,-soname,libb.so "${DUCKEMU_SO_SOURCE_DIR}/libb.c"
+            -o "${DUCKEMU_SO_BUILD_DIR}/libb.so"
+    DEPENDS "${DUCKEMU_SO_SOURCE_DIR}/libb.c"
+    COMMENT "Building guest .so libb.so")
+
+add_custom_command(
+    OUTPUT "${DUCKEMU_SO_BUILD_DIR}/liblog.so"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${DUCKEMU_SO_BUILD_DIR}"
+    COMMAND ${DUCKEMU_CLANG_EXECUTABLE} ${DUCKEMU_GUEST_SO_FLAGS}
+            -Wl,-soname,liblog.so "${DUCKEMU_SO_SOURCE_DIR}/liblog_stub.c"
+            -o "${DUCKEMU_SO_BUILD_DIR}/liblog.so"
+    DEPENDS "${DUCKEMU_SO_SOURCE_DIR}/liblog_stub.c"
+    COMMENT "Building link-only stub liblog.so")
+
+add_custom_command(
+    OUTPUT "${DUCKEMU_SO_BUILD_DIR}/libc.so"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${DUCKEMU_SO_BUILD_DIR}"
+    COMMAND ${DUCKEMU_CLANG_EXECUTABLE} ${DUCKEMU_GUEST_SO_FLAGS}
+            -Wl,-soname,libc.so "${DUCKEMU_SO_SOURCE_DIR}/libc_stub.c"
+            -o "${DUCKEMU_SO_BUILD_DIR}/libc.so"
+    DEPENDS "${DUCKEMU_SO_SOURCE_DIR}/libc_stub.c"
+    COMMENT "Building link-only stub libc.so")
+
+add_custom_command(
+    OUTPUT "${DUCKEMU_SO_BUILD_DIR}/liba.so"
+    COMMAND ${DUCKEMU_CLANG_EXECUTABLE} ${DUCKEMU_GUEST_SO_FLAGS}
+            -Wl,-soname,liba.so "${DUCKEMU_SO_SOURCE_DIR}/liba.c"
+            -o "${DUCKEMU_SO_BUILD_DIR}/liba.so"
+            -L"${DUCKEMU_SO_BUILD_DIR}" -Wl,--no-as-needed
+            -l:libc.so -l:liblog.so -l:libb.so
+    DEPENDS "${DUCKEMU_SO_SOURCE_DIR}/liba.c"
+            "${DUCKEMU_SO_BUILD_DIR}/libb.so"
+            "${DUCKEMU_SO_BUILD_DIR}/liblog.so"
+            "${DUCKEMU_SO_BUILD_DIR}/libc.so"
+    COMMENT "Building guest .so liba.so")
+
+add_custom_command(
+    OUTPUT "${DUCKEMU_SO_BUILD_DIR}/libmissing.so"
+    COMMAND ${DUCKEMU_CLANG_EXECUTABLE} ${DUCKEMU_GUEST_SO_FLAGS}
+            -Wl,-soname,libmissing.so "${DUCKEMU_SO_SOURCE_DIR}/libmissing.c"
+            -o "${DUCKEMU_SO_BUILD_DIR}/libmissing.so"
+    DEPENDS "${DUCKEMU_SO_SOURCE_DIR}/libmissing.c"
+    COMMENT "Building guest .so libmissing.so")
+
+# The runtime view of the fixture: only what the loader may legitimately open.
+# liblog.so and libc.so exist but are not ELF, so a loader that consults the
+# filesystem before the virtual module table fails here instead of passing.
+file(MAKE_DIRECTORY "${DUCKEMU_SO_RUNTIME_DIR}")
+file(WRITE "${DUCKEMU_SO_RUNTIME_DIR}/liblog.so" "must not be read\n")
+file(WRITE "${DUCKEMU_SO_RUNTIME_DIR}/libc.so" "must not be read\n")
+
+add_custom_command(
+    OUTPUT "${DUCKEMU_SO_RUNTIME_DIR}/liba.so"
+           "${DUCKEMU_SO_RUNTIME_DIR}/libb.so"
+           "${DUCKEMU_SO_RUNTIME_DIR}/libmissing.so"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${DUCKEMU_SO_RUNTIME_DIR}"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${DUCKEMU_SO_BUILD_DIR}/liba.so" "${DUCKEMU_SO_RUNTIME_DIR}/liba.so"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${DUCKEMU_SO_BUILD_DIR}/libb.so" "${DUCKEMU_SO_RUNTIME_DIR}/libb.so"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${DUCKEMU_SO_BUILD_DIR}/libmissing.so" "${DUCKEMU_SO_RUNTIME_DIR}/libmissing.so"
+    DEPENDS "${DUCKEMU_SO_BUILD_DIR}/liba.so"
+            "${DUCKEMU_SO_BUILD_DIR}/libb.so"
+            "${DUCKEMU_SO_BUILD_DIR}/libmissing.so")
+
+add_custom_target(guest_so ALL
+    DEPENDS "${DUCKEMU_SO_RUNTIME_DIR}/liba.so"
+            "${DUCKEMU_SO_RUNTIME_DIR}/libb.so"
+            "${DUCKEMU_SO_RUNTIME_DIR}/libmissing.so")
+
+# ---------------------------------------------------------------------------
 # Test support
 # ---------------------------------------------------------------------------
 add_library(duckemu_test_support STATIC support/blob_loader.cpp)
@@ -69,6 +160,28 @@ duckemu_add_integration_test(01_tls_read)
 duckemu_add_integration_test(02_pure_native)
 duckemu_add_integration_test(02_stack_dump)
 duckemu_add_integration_test(03_pthread_join)
+
+function(duckemu_add_loader_test name)
+  add_executable(${name} "integration/${name}.cpp")
+  target_link_libraries(${name} PRIVATE duckemu_runtime duckemu_test_support)
+  target_compile_definitions(${name} PRIVATE
+    DUCKEMU_TRACE_DIR="${CMAKE_CURRENT_BINARY_DIR}/traces"
+    DUCKEMU_SO_DIR="${DUCKEMU_SO_RUNTIME_DIR}")
+  add_dependencies(${name} guest_so)
+  add_test(NAME ${name} COMMAND ${name})
+  set_tests_properties(${name} PROPERTIES TIMEOUT 60)
+  duckemu_set_warnings(${name})
+endfunction()
+
+duckemu_add_loader_test(04_so_load)
+
+add_executable(elf_image_test unit/runtime/loader/elf_image_test.cpp)
+target_link_libraries(elf_image_test PRIVATE duckemu_runtime duckemu_test_support)
+target_compile_definitions(elf_image_test PRIVATE
+  DUCKEMU_SO_DIR="${DUCKEMU_SO_RUNTIME_DIR}")
+add_dependencies(elf_image_test guest_so)
+add_test(NAME elf_image_test COMMAND elf_image_test)
+duckemu_set_warnings(elf_image_test)
 
 # ---------------------------------------------------------------------------
 # Unit tests

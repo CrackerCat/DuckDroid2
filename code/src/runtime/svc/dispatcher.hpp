@@ -61,7 +61,7 @@ class SvcDispatcher
 
     private:
 	int64_t dispatchSyscall(uint32_t number, const std::array<uint64_t, 6> &args, bool &supported);
-	int64_t invokeHostStub(uint32_t index, const std::array<uint64_t, 8> &args, bool &supported);
+	int64_t invokeHostStub(uc_engine *uc, uint32_t index, const std::array<uint64_t, 8> &args, bool &supported);
 	void captureStack(uc_engine *uc, observer::SvcEvent &event) const;
 	void logUnsupported(const observer::SvcEvent &event) const;
 

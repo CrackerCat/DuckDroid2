@@ -67,8 +67,15 @@ duckemu_set_warnings(duckemu_common)
 
 add_library(duckemu_runtime STATIC
   src/runtime/instance/runtime_instance.cpp
+  src/runtime/loader/elf/elf_image.cpp
+  src/runtime/loader/module_loader.cpp
+  src/runtime/loader/module_registry.cpp
+  src/runtime/loader/reloc/reloc_applier.cpp
+  src/runtime/loader/symbol_lookup.cpp
+  src/runtime/loader/virtual_modules/virtual_modules.cpp
   src/runtime/memory/address_space.cpp
   src/runtime/memory/thunk/thunk_table.cpp
+  src/runtime/vfs/runtime_vfs.cpp
   src/runtime/backend/unicorn/unicorn_engine.cpp
   src/runtime/backend/unicorn/unicorn_backend.cpp
   src/runtime/backend/unicorn/unicorn_hooks.cpp

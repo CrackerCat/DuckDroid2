@@ -124,6 +124,28 @@ bool EventBus::removeThreadListener(uint32_t id)
 	return false;
 }
 
+uint32_t EventBus::addModuleListener(ModuleListener listener)
+{
+	std::lock_guard<std::mutex> lock(mutex_);
+	const uint32_t id = next_listener_id_++;
+	module_listeners_.emplace_back(id, std::move(listener));
+	return id;
+}
+
+bool EventBus::removeModuleListener(uint32_t id)
+{
+	std::lock_guard<std::mutex> lock(mutex_);
+	for (auto it = module_listeners_.begin(); it != module_listeners_.end(); ++it)
+	{
+		if (it->first == id)
+		{
+			module_listeners_.erase(it);
+			return true;
+		}
+	}
+	return false;
+}
+
 bool EventBus::delivering() const noexcept
 {
 	return t_deliver_depth != 0;
@@ -160,6 +182,18 @@ void EventBus::publishThread(ThreadEvent event)
 	}();
 	event.id = id;
 	deliverAll("thread", snapshot, event);
+}
+
+void EventBus::publishModule(ModuleEvent event)
+{
+	uint64_t id = 0;
+	const std::vector<std::pair<uint32_t, ModuleListener> > snapshot = [this, &id] {
+		std::lock_guard<std::mutex> lock(mutex_);
+		id = next_module_event_id_++;
+		return module_listeners_;
+	}();
+	event.id = id;
+	deliverAll("module", snapshot, event);
 }
 
 } // namespace duckemu::runtime::observer

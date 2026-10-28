@@ -81,6 +81,78 @@ bool readArgRegisters(uc_engine *uc, size_t count, std::array<uint64_t, kHostArg
 	return true;
 }
 
+// Host stub -> guest call. Runs the same engine nested, with a full context
+// save/restore around it (M0 probe 6: without the restore, only the innermost
+// frame continues correctly). The total nesting is capped at 32 (M0 result
+// §6.2: Unicorn's own limit of 64 corrupts nested_level).
+constexpr int kMaxNestedGuestCalls = 32;
+
+Result<int64_t> callGuestNested(uc_engine *uc,
+	GuestVA entry,
+	GuestVA return_trap,
+	const std::array<uint64_t, kHostArgCount> &args)
+{
+	static thread_local int depth = 0;
+	if (depth >= kMaxNestedGuestCalls)
+	{
+		return Error{ ErrorCode::Unsupported, "nested guest call limit (32) reached" };
+	}
+
+	uc_context *context = nullptr;
+	if (uc_context_alloc(uc, &context) != UC_ERR_OK || context == nullptr)
+	{
+		return Error{ ErrorCode::Internal, "uc_context_alloc failed" };
+	}
+	struct ContextReleaser
+	{
+		uc_context *context;
+		~ContextReleaser()
+		{
+			uc_context_free(context);
+		}
+	} releaser{ context };
+
+	if (uc_context_save(uc, context) != UC_ERR_OK)
+	{
+		return Error{ ErrorCode::Internal, "uc_context_save failed" };
+	}
+
+	for (size_t i = 0; i < kHostArgCount; ++i)
+	{
+		if (auto written = writeRegister(uc, kArgRegs[i], args[i]); !written.ok())
+		{
+			uc_context_restore(uc, context);
+			return written.error();
+		}
+	}
+	if (auto written = writeRegister(uc, UC_ARM64_REG_X30, return_trap.value()); !written.ok())
+	{
+		uc_context_restore(uc, context);
+		return written.error();
+	}
+
+	++depth;
+	const uc_err err = uc_emu_start(uc, entry.value(), return_trap.value(), 0, 0);
+	--depth;
+
+	// Restore before looking at anything else: the outer guest's registers
+	// (including PC == svc + 4) live in the saved block.
+	uc_context_restore(uc, context);
+
+	if (err != UC_ERR_OK)
+	{
+		return Error{ ErrorCode::EmulationFault,
+			std::string("nested guest call failed: ") + uc_strerror(err) };
+	}
+
+	auto result = readRegister(uc, UC_ARM64_REG_X0);
+	if (!result.ok())
+	{
+		return result.error();
+	}
+	return static_cast<int64_t>(result.value());
+}
+
 } // namespace
 
 SvcDispatcher::SvcDispatcher(RuntimeMemory &memory,
@@ -181,7 +253,7 @@ void SvcDispatcher::onTrap(uc_engine *uc, uint32_t intno)
 		{
 			event.args[i] = raw_args[i];
 		}
-		result = invokeHostStub(event.number, raw_args, event.supported);
+		result = invokeHostStub(uc, event.number, raw_args, event.supported);
 	}
 	else
 	{
@@ -265,10 +337,17 @@ int64_t SvcDispatcher::dispatchSyscall(uint32_t number, const std::array<uint64_
 	return value;
 }
 
-int64_t SvcDispatcher::invokeHostStub(uint32_t index, const std::array<uint64_t, 8> &args, bool &supported)
+int64_t SvcDispatcher::invokeHostStub(uc_engine *uc, uint32_t index, const std::array<uint64_t, 8> &args, bool &supported)
 {
 	HostCallArgs call;
 	call.x = args;
+	call.thread_pointer = thread_.tls_tp;
+	// A host stub may need to call back into guest code (pthread_once). The
+	// engine is nested with a full context save/restore (M0 probe 6) and the
+	// guest-side frame is capped at 32 (M0 result §6.2). M5 reuses this path.
+	call.call_guest = [this, uc](GuestVA entry, const std::array<uint64_t, 8> &guest_args) {
+		return callGuestNested(uc, entry, threads_.returnTrap(), guest_args);
+	};
 
 	++stats_.host_calls;
 	auto result = thunks_.invoke(index, call);

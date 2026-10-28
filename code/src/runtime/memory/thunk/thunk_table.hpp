@@ -20,6 +20,15 @@ class RuntimeMemory;
 struct HostCallArgs
 {
 	std::array<uint64_t, 8> x{};
+
+	// Filled by the SVC dispatcher for stubs that must call back into guest
+	// code (pthread_once). Empty when a stub is invoked outside an SVC trap.
+	// Nested calls save/restore the engine context (M0 probe 6) and are capped
+	// at 32 frames. M5 reuses this path for Call*Method.
+	std::function<Result<int64_t>(GuestVA entry, const std::array<uint64_t, 8> &args)> call_guest;
+	// TPIDR_EL0 of the thread that made the call. Lets __errno and friends find
+	// the calling thread's bionic TLS.
+	uint64_t thread_pointer = 0;
 };
 
 using HostStub = std::function<int64_t(HostCallArgs &)>;

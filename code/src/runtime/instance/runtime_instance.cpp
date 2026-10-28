@@ -3,6 +3,7 @@
 #include <utility>
 
 #include "runtime/backend/unicorn/unicorn_backend.hpp"
+#include "runtime/loader/module_loader.hpp"
 #include "runtime/memory/address_space.hpp"
 #include "runtime/observer/trace/svc_trace.hpp"
 #include "runtime/threads/scheduler.hpp"
@@ -31,6 +32,7 @@ struct RuntimeInstance::Impl
 	std::unique_ptr<observer::EventBus> events;
 	std::unique_ptr<UnicornBackend> backend;
 	std::unique_ptr<ThunkTable> thunks;
+	std::unique_ptr<loader::ModuleLoader> modules;
 	std::unique_ptr<tls::TlsManager> tls;
 	// Co-owned with the bus listener that writes to it: the listener captures
 	// a shared_ptr, so the file outlives any Impl member regardless of
@@ -84,6 +86,9 @@ Result<std::unique_ptr<RuntimeInstance> > RuntimeInstance::create(const RuntimeC
 		return thunks.error();
 	}
 	impl->thunks = std::move(thunks).value();
+
+	impl->modules = std::make_unique<loader::ModuleLoader>(
+		impl->memory, *impl->thunks, impl->events.get(), config.library_search_paths);
 
 	impl->tls = std::make_unique<tls::TlsManager>(impl->memory);
 	auto tls_instance = impl->tls->create(config.tid, config.pid, impl->stack_top);
@@ -152,6 +157,65 @@ Result<void> RuntimeInstance::readMemory(GuestVA address, void *data, uint64_t s
 	return impl_->memory.read(address, data, size);
 }
 
+Result<uint64_t> RuntimeInstance::loadLibrary(std::string_view path)
+{
+	if (impl_->state != Impl::State::Ready)
+	{
+		return Error{ ErrorCode::InvalidArgument, "RuntimeInstance is not ready to load modules" };
+	}
+
+	uint64_t handle = 0;
+	{
+		// Mapping and relocation must not race a running engine; constructors
+		// must not run while this thread holds the execution lock (the main
+		// guest thread needs it to make progress), so the lock is released
+		// before the initializer loop below.
+		auto execution = impl_->scheduler->lockExecution();
+		auto loaded = impl_->modules->load(path);
+		if (!loaded.ok())
+		{
+			// Dependencies that did load keep their constructors pending; they
+			// are discarded rather than run against a half-loaded graph.
+			(void)impl_->modules->takeInitializers();
+			return loaded.error();
+		}
+		handle = loaded.value();
+	}
+
+	const std::vector<loader::Initializer> initializers = impl_->modules->takeInitializers();
+	for (const loader::Initializer &initializer : initializers)
+	{
+		auto call = impl_->scheduler->callFunction(initializer.function, {});
+		if (!call.ok())
+		{
+			if (call.error().code == ErrorCode::EmulationFault)
+			{
+				impl_->state = Impl::State::Faulted;
+			}
+			return call.error();
+		}
+		if (call.value().exit_code.has_value())
+		{
+			return Error{ ErrorCode::Unsupported, "a module constructor called exit_group" };
+		}
+	}
+	return handle;
+}
+
+Result<GuestVA> RuntimeInstance::lookupSymbol(uint64_t handle, std::string_view name) const
+{
+	// Resolving a virtual symbol materializes a thunk (writes guest memory), so
+	// this needs the same guard as every other host API.
+	auto execution = impl_->scheduler->lockExecution();
+	return impl_->modules->lookup(handle, name);
+}
+
+Result<GuestVA> RuntimeInstance::lookupSymbol(std::string_view name) const
+{
+	auto execution = impl_->scheduler->lockExecution();
+	return impl_->modules->lookupGlobal(name);
+}
+
 Result<GuestVA> RuntimeInstance::registerHostFunction(std::string_view name, HostStub stub)
 {
 	auto execution = impl_->scheduler->lockExecution();
@@ -183,6 +247,11 @@ uint32_t RuntimeInstance::addSvcListener(observer::EventBus::SvcListener listene
 	return impl_->events->addSvcListener(std::move(listener));
 }
 
+uint32_t RuntimeInstance::addModuleListener(observer::EventBus::ModuleListener listener)
+{
+	return impl_->events->addModuleListener(std::move(listener));
+}
+
 uint32_t RuntimeInstance::addMemoryListener(observer::EventBus::MemoryListener listener)
 {
 	return impl_->events->addMemoryListener(std::move(listener));
@@ -206,6 +275,11 @@ bool RuntimeInstance::removeMemoryListener(uint32_t id)
 bool RuntimeInstance::removeThreadListener(uint32_t id)
 {
 	return impl_->events->removeThreadListener(id);
+}
+
+bool RuntimeInstance::removeModuleListener(uint32_t id)
+{
+	return impl_->events->removeModuleListener(id);
 }
 
 size_t RuntimeInstance::drainDiagnostics(std::vector<observer::DiagnosticEvent> &out)

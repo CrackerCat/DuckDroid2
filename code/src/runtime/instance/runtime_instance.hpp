@@ -30,6 +30,10 @@ struct RuntimeConfig
 	std::string trace_path;
 	bool record_memory_access = false;
 	size_t diagnostic_capacity = 1u << 14;
+
+	// Loader search path for DT_NEEDED names that are not virtual modules. The
+	// directory of the requesting module is always searched first.
+	std::vector<std::string> library_search_paths;
 };
 
 // The single facade over one guest world. M1 owns one host thread and one
@@ -50,6 +54,16 @@ class RuntimeInstance
 	Result<void> writeMemory(GuestVA address, const void *data, uint64_t size);
 	Result<void> readMemory(GuestVA address, void *data, uint64_t size) const;
 
+	// Loads a shared object and its DT_NEEDED graph, applies relocations and
+	// runs the constructors. Returns a handle for lookupSymbol. Must be called
+	// before the first callFunction (static TLS is not installed afterwards).
+	Result<uint64_t> loadLibrary(std::string_view path);
+
+	// Address of a symbol exported by the module behind `handle`, or the first
+	// module in load order that exports it.
+	Result<GuestVA> lookupSymbol(uint64_t handle, std::string_view name) const;
+	Result<GuestVA> lookupSymbol(std::string_view name) const;
+
 	// Registers a host implementation and returns the guest thunk address.
 	// Calling it from the guest goes SVC -> dispatcher -> stub, then `ret`.
 	Result<GuestVA> registerHostFunction(std::string_view name, HostStub stub);
@@ -69,9 +83,11 @@ class RuntimeInstance
 	uint32_t addSvcListener(observer::EventBus::SvcListener listener);
 	uint32_t addMemoryListener(observer::EventBus::MemoryListener listener);
 	uint32_t addThreadListener(observer::EventBus::ThreadListener listener);
+	uint32_t addModuleListener(observer::EventBus::ModuleListener listener);
 	bool removeSvcListener(uint32_t id);
 	bool removeMemoryListener(uint32_t id);
 	bool removeThreadListener(uint32_t id);
+	bool removeModuleListener(uint32_t id);
 
 	// Diagnostic channel. Returns the number of events moved into `out`;
 	// droppedDiagnostics() counts events lost because the ring was full.

@@ -40,6 +40,10 @@ class ThreadSystem
 	virtual void setClearChildTid(RuntimeThread &thread, GuestVA address) = 0;
 
 	[[nodiscard]] virtual bool stopping() const = 0;
+
+	// Guest address that ends a host-initiated guest call (callFunction and the
+	// nested calls a host stub makes, e.g. pthread_once).
+	[[nodiscard]] virtual GuestVA returnTrap() const = 0;
 };
 
 } // namespace duckemu::runtime::threads
