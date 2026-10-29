@@ -373,6 +373,16 @@ add_test(NAME 04c_bionic COMMAND 04c_bionic)
 set_tests_properties(04c_bionic PROPERTIES TIMEOUT 120)
 duckemu_set_warnings(04c_bionic)
 
+# Regression: an unresolved DT_NEEDED takes the loader's failure path, which
+# used to read the Module after erasing it.
+add_executable(module_missing_dep_test unit/runtime/loader/module_missing_dep_test.cpp)
+target_link_libraries(module_missing_dep_test PRIVATE duckemu_runtime duckemu_test_support)
+target_compile_definitions(module_missing_dep_test PRIVATE
+  DUCKEMU_SO_DIR="${DUCKEMU_SO_RUNTIME_DIR}")
+add_dependencies(module_missing_dep_test guest_so)
+add_test(NAME module_missing_dep_test COMMAND module_missing_dep_test)
+duckemu_set_warnings(module_missing_dep_test)
+
 add_executable(elf_image_test unit/runtime/loader/elf_image_test.cpp)
 target_link_libraries(elf_image_test PRIVATE duckemu_runtime duckemu_test_support)
 target_compile_definitions(elf_image_test PRIVATE

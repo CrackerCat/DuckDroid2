@@ -175,10 +175,12 @@ Result<Module *> ModuleLoader::loadImage(const std::string &path, ElfImage parse
 		const ElfTlsTemplate &tls = registered.tls;
 		if (tls.offset > elf.bytes().size() || tls.filesz > elf.bytes().size() - tls.offset)
 		{
+			// erase() destroys the Module: copy what the error message needs
+			// before it is gone.
+			const std::string soname = registered.soname;
 			unmapSegments(registered);
 			registry_.erase(registered.handle);
-			return Error{ ErrorCode::InvalidArgument,
-				registered.soname + ": PT_TLS image is out of bounds" };
+			return Error{ ErrorCode::InvalidArgument, soname + ": PT_TLS image is out of bounds" };
 		}
 		auto materialized = tls_sink_(registered.tls_offset,
 			elf.bytes().data() + tls.offset,
@@ -236,10 +238,13 @@ Result<Module *> ModuleLoader::loadImage(const std::string &path, ElfImage parse
 
 		if (!ok)
 		{
+			// `needed` is a reference into registered.needed: build the message
+			// before erase() destroys the Module.
+			const std::string message =
+				registered.soname + ": cannot load dependency " + needed + ": " + detail;
 			unmapSegments(registered);
 			registry_.erase(registered.handle);
-			return Error{ ErrorCode::NotFound,
-				registered.soname + ": cannot load dependency " + needed + ": " + detail };
+			return Error{ ErrorCode::NotFound, message };
 		}
 	}
 
