@@ -18,6 +18,16 @@
 namespace duckemu::runtime
 {
 
+namespace jni
+{
+class JavaWorld;
+}
+
+// A project's Java environment pack (one function that declares its classes,
+// methods, fields and shims). Target packs live in code/user_code and are
+// installed explicitly by their runner; the runtime never names a target.
+using JavaEnvironmentInstaller = Result<void> (*)(jni::JavaWorld &world);
+
 struct RuntimeConfig
 {
 	uint32_t pid = 1000;
@@ -68,6 +78,11 @@ class RuntimeInstance
 	Result<void> writeMemory(GuestVA address, const void *data, uint64_t size);
 	Result<void> readMemory(GuestVA address, void *data, uint64_t size) const;
 
+	// Installs a project's Java environment. Must be called before the first
+	// loadLibrary; this is the only wiring point for target packs. Platform
+	// packs are installed automatically at create.
+	Result<void> installJavaEnvironment(JavaEnvironmentInstaller installer);
+
 	// Loads a shared object and its DT_NEEDED graph, applies relocations and
 	// runs the constructors. Returns a handle for lookupSymbol. Must be called
 	// before the first callFunction (static TLS is not installed afterwards).
@@ -91,6 +106,25 @@ class RuntimeInstance
 	// Calls a guest function with x0..x7, SP set to the instance stack and
 	// LR pointing at an internal return trap.
 	Result<CallResult> callFunction(GuestVA entry, const std::array<uint64_t, 8> &args = {});
+
+	// Invokes a native method registered through RegisterNatives. The runtime
+	// supplies JNIEnv* (x0) and jclass (x1), so up to six arguments go to
+	// x2..x7. Strict: an undeclared class or an unregistered method is an error,
+	// never a default value.
+	Result<uint64_t> callRegisteredNative(std::string_view class_descriptor,
+		std::string_view name,
+		std::string_view signature,
+		const std::array<uint64_t, 8> &args = {});
+	// Address behind a registered native method, or NotFound.
+	Result<GuestVA> lookupRegisteredNative(std::string_view class_descriptor,
+		std::string_view name,
+		std::string_view signature) const;
+	// UTF-8 contents of a jstring handle returned by guest code.
+	Result<std::string> jniStringUtf8(uint64_t handle) const;
+
+	// Strict-mode failures (missing class/method/field, unsupported JNI slot).
+	uint32_t addJniListener(observer::EventBus::JniListener listener);
+	bool removeJniListener(uint32_t id);
 
 	// Semantic observation. Listeners run synchronously on the emulating
 	// thread, in guest order, and must not call back into the emulator.

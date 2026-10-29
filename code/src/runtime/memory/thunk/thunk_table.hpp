@@ -27,8 +27,14 @@ struct HostCallArgs
 	// at 32 frames. M5 reuses this path for Call*Method.
 	std::function<Result<int64_t>(GuestVA entry, const std::array<uint64_t, 8> &args)> call_guest;
 	// TPIDR_EL0 of the thread that made the call. Lets __errno and friends find
-	// the calling thread's bionic TLS.
+	// the calling thread's bionic TLS, and the JNI layer find its per-thread
+	// JNIEnv slot.
 	uint64_t thread_pointer = 0;
+	// Guest SP at the trap. Variadic JNI calls pass arguments beyond x0..x7 on
+	// the stack; M5 does not read them yet, but the value is captured so the
+	// ABI adapter has a single place to grow.
+	uint64_t sp = 0;
+	uint32_t tid = 0;
 };
 
 using HostStub = std::function<int64_t(HostCallArgs &)>;

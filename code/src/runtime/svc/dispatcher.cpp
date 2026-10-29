@@ -136,6 +136,11 @@ Result<int64_t> callGuestNested(uc_engine *uc,
 	const uc_err err = uc_emu_start(uc, entry.value(), return_trap.value(), 0, 0);
 	--depth;
 
+	// Read the nested call's result *before* restoring the outer context: the
+	// restore also brings back the outer x0 (this was latent until JNI
+	// Call*Method needed the nested return value).
+	auto result = readRegister(uc, UC_ARM64_REG_X0);
+
 	// Restore before looking at anything else: the outer guest's registers
 	// (including PC == svc + 4) live in the saved block.
 	uc_context_restore(uc, context);
@@ -146,7 +151,6 @@ Result<int64_t> callGuestNested(uc_engine *uc,
 			std::string("nested guest call failed: ") + uc_strerror(err) };
 	}
 
-	auto result = readRegister(uc, UC_ARM64_REG_X0);
 	if (!result.ok())
 	{
 		return result.error();
@@ -344,7 +348,22 @@ int64_t SvcDispatcher::invokeHostStub(uc_engine *uc, uint32_t index, const std::
 {
 	HostCallArgs call;
 	call.x = args;
-	call.thread_pointer = thread_.tls_tp;
+	// Read the live TPIDR_EL0 rather than the scheduler's cached value: libc's
+	// __set_tls writes it directly, and a JNI call can follow in the same run,
+	// before the scheduler gets a chance to copy it back.
+	if (auto tp = readRegister(uc, UC_ARM64_REG_TPIDR_EL0); tp.ok())
+	{
+		call.thread_pointer = tp.value();
+	}
+	else
+	{
+		call.thread_pointer = thread_.tls_tp;
+	}
+	if (auto sp = readRegister(uc, UC_ARM64_REG_SP); sp.ok())
+	{
+		call.sp = sp.value();
+	}
+	call.tid = thread_.tid;
 	// A host stub may need to call back into guest code (pthread_once). The
 	// engine is nested with a full context save/restore (M0 probe 6) and the
 	// guest-side frame is capped at 32 (M0 result §6.2). M5 reuses this path.

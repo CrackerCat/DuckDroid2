@@ -211,6 +211,78 @@ set(DUCKEMU_ROM_BOOTSTRAP "${DUCKEMU_ROM_LIB64}/bootstrap")
 set(DUCKEMU_ROM_SYMBOLS
     "${DUCKEMU_ANDROID_ENV_ROOT}/ROM/out/target/product/lemonade/symbols"
     CACHE PATH "ROM symbols directory; mounted as guest / for file syscalls")
+set(DUCKEMU_JNI_INCLUDE
+    "${DUCKEMU_ANDROID_ENV_ROOT}/ROM/libnativehelper/include_jni"
+    CACHE PATH "Directory containing the ROM's jni.h")
+set(DUCKEMU_LIBELEVEN_CASE_SO
+    "${DUCKEMU_ANDROID_ENV_ROOT}/DuckDroid/code/user_code/libeleven_case/assets/libeleven.so"
+    CACHE FILEPATH "libeleven sample used by the M5 JNI gate")
+
+# ---------------------------------------------------------------------------
+# M5: JNI fixture. Compiled against the ROM's real jni.h, with no DT_NEEDED;
+# every JNI call goes through the table JNI_OnLoad receives.
+# ---------------------------------------------------------------------------
+add_custom_command(
+  OUTPUT "${DUCKEMU_SO_BUILD_DIR}/libjnifixture.so"
+  COMMAND ${CMAKE_COMMAND} -E make_directory "${DUCKEMU_SO_BUILD_DIR}"
+  COMMAND ${DUCKEMU_CLANG_EXECUTABLE}
+          --target=aarch64-linux-android31 -fPIC -shared -nostdlib -O1
+          -fno-stack-protector -fno-builtin
+          -I"${DUCKEMU_JNI_INCLUDE}"
+          -Wl,--pack-dyn-relocs=none -Wl,-soname,libjnifixture.so
+          "${DUCKEMU_SO_SOURCE_DIR}/jni_fixture.c"
+          -o "${DUCKEMU_SO_BUILD_DIR}/libjnifixture.so"
+  DEPENDS "${DUCKEMU_SO_SOURCE_DIR}/jni_fixture.c"
+  COMMENT "Building guest .so libjnifixture.so")
+
+add_custom_command(
+  OUTPUT "${DUCKEMU_SO_RUNTIME_DIR}/libjnifixture.so"
+  COMMAND ${CMAKE_COMMAND} -E make_directory "${DUCKEMU_SO_RUNTIME_DIR}"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+          "${DUCKEMU_SO_BUILD_DIR}/libjnifixture.so"
+          "${DUCKEMU_SO_RUNTIME_DIR}/libjnifixture.so"
+  DEPENDS "${DUCKEMU_SO_BUILD_DIR}/libjnifixture.so")
+
+add_custom_target(jni_fixture ALL DEPENDS "${DUCKEMU_SO_RUNTIME_DIR}/libjnifixture.so")
+
+function(duckemu_add_jni_fixture_test name)
+  add_executable(${name} "integration/${name}.cpp" "fixtures/envs/fixture_env.cpp")
+  target_link_libraries(${name} PRIVATE duckemu_runtime duckemu_test_support)
+  target_compile_definitions(${name} PRIVATE
+    DUCKEMU_TRACE_DIR="${CMAKE_CURRENT_BINARY_DIR}/traces"
+    DUCKEMU_JNI_FIXTURE_SO="${DUCKEMU_SO_RUNTIME_DIR}/libjnifixture.so")
+  add_dependencies(${name} jni_fixture)
+  add_test(NAME ${name} COMMAND ${name})
+  set_tests_properties(${name} PROPERTIES TIMEOUT 120)
+  duckemu_set_warnings(${name})
+endfunction()
+
+duckemu_add_jni_fixture_test(05_jni_env)
+duckemu_add_jni_fixture_test(05_jni_stub)
+
+# M5 S3: the real libeleven JNI_OnLoad (ROM libc + the library's closure).
+add_executable(05_jni_real integration/05_jni_real.cpp)
+target_link_libraries(05_jni_real PRIVATE
+  duckemu_runtime duckemu_test_support duckemu_user_libeleven)
+target_compile_definitions(05_jni_real PRIVATE
+  DUCKEMU_TRACE_DIR="${CMAKE_CURRENT_BINARY_DIR}/traces"
+  DUCKEMU_ROM_BOOTSTRAP="${DUCKEMU_ROM_BOOTSTRAP}"
+  DUCKEMU_ROM_LIB64="${DUCKEMU_ROM_LIB64}"
+  DUCKEMU_LIBELEVEN_CASE_SO="${DUCKEMU_LIBELEVEN_CASE_SO}")
+add_test(NAME 05_jni_real COMMAND 05_jni_real)
+set_tests_properties(05_jni_real PROPERTIES TIMEOUT 120)
+duckemu_set_warnings(05_jni_real)
+
+add_executable(jni_world_test unit/runtime/jni_world_test.cpp)
+target_link_libraries(jni_world_test PRIVATE duckemu_runtime duckemu_test_support)
+add_test(NAME jni_world_test COMMAND jni_world_test)
+duckemu_set_warnings(jni_world_test)
+
+add_executable(jni_layout_test unit/runtime/jni_layout_test.cpp)
+target_include_directories(jni_layout_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
+target_include_directories(jni_layout_test SYSTEM PRIVATE "${DUCKEMU_JNI_INCLUDE}")
+add_test(NAME jni_layout_test COMMAND jni_layout_test)
+duckemu_set_warnings(jni_layout_test)
 
 add_executable(04b_libc_map integration/04b_libc_map.cpp)
 target_link_libraries(04b_libc_map PRIVATE duckemu_runtime duckemu_test_support)

@@ -3,6 +3,9 @@
 #include <utility>
 
 #include "runtime/backend/unicorn/unicorn_backend.hpp"
+#include "runtime/jni/env/jni_state.hpp"
+#include "runtime/jni/envs/envs.hpp"
+#include "runtime/jni/world/java_world.hpp"
 #include "runtime/loader/bionic/shared_globals.hpp"
 #include "runtime/loader/module_loader.hpp"
 #include "runtime/memory/address_space.hpp"
@@ -36,6 +39,9 @@ struct RuntimeInstance::Impl
 	std::unique_ptr<observer::EventBus> events;
 	std::unique_ptr<UnicornBackend> backend;
 	std::unique_ptr<ThunkTable> thunks;
+	// JNI is created right after the thunk table: it registers one thunk per
+	// JNIEnv/JavaVM table slot and publishes the guest-visible tables.
+	std::unique_ptr<jni::JniState> jni;
 	std::unique_ptr<loader::BionicGlobals> bionic_globals;
 	std::unique_ptr<loader::ModuleLoader> modules;
 	// Files outlive the modules whose names they resolve (/proc/self/maps).
@@ -114,6 +120,25 @@ Result<std::unique_ptr<RuntimeInstance> > RuntimeInstance::create(const RuntimeC
 		return thunks.error();
 	}
 	impl->thunks = std::move(thunks).value();
+
+	auto java_world = std::make_unique<jni::JavaWorld>(impl->memory);
+	if (auto initialized = java_world->initialize(); !initialized.ok())
+	{
+		return initialized.error();
+	}
+	if (auto installed = jni::envs::installAll(*java_world); !installed.ok())
+	{
+		return installed.error();
+	}
+	auto jni_state = jni::JniState::create(impl->memory,
+		*impl->thunks,
+		impl->events.get(),
+		std::move(java_world));
+	if (!jni_state.ok())
+	{
+		return jni_state.error();
+	}
+	impl->jni = std::move(jni_state).value();
 
 	loader::BionicGlobalsConfig globals_config;
 	globals_config.pid = config.pid;
@@ -233,6 +258,29 @@ Result<void> RuntimeInstance::readMemory(GuestVA address, void *data, uint64_t s
 	return impl_->memory.read(address, data, size);
 }
 
+Result<void> RuntimeInstance::installJavaEnvironment(JavaEnvironmentInstaller installer)
+{
+	if (impl_->state != Impl::State::Ready)
+	{
+		return Error{ ErrorCode::InvalidArgument, "RuntimeInstance is not ready to install environments" };
+	}
+	if (installer == nullptr)
+	{
+		return Error{ ErrorCode::InvalidArgument, "null Java environment installer" };
+	}
+	// Declarations allocate guest metadata; serialize with any running guest.
+	auto execution = impl_->scheduler->lockExecution();
+	// JNI_OnLoad runs inside loadLibrary, so every declaration must be in place
+	// before the first module load. Refusing afterwards is deliberate: a late
+	// install would look successful while the target already failed FindClass.
+	if (impl_->modules->moduleCount() != 0)
+	{
+		return Error{ ErrorCode::InvalidArgument,
+			"install Java environments before loading any module" };
+	}
+	return installer(impl_->jni->world());
+}
+
 Result<uint64_t> RuntimeInstance::loadLibrary(std::string_view path)
 {
 	if (impl_->state != Impl::State::Ready)
@@ -324,6 +372,43 @@ Result<uint64_t> RuntimeInstance::loadLibrary(std::string_view path)
 			return Error{ ErrorCode::Unsupported, "a module constructor called exit_group" };
 		}
 	}
+
+	// JNI_OnLoad, when exported by the module being loaded, runs after its
+	// constructors and before loadLibrary returns (the System.loadLibrary
+	// analogue). Dependencies are not asked: dlopen only calls the entry point
+	// of the library that was opened.
+	std::optional<GuestVA> jni_on_load;
+	{
+		auto execution = impl_->scheduler->lockExecution();
+		auto found = impl_->modules->lookup(handle, "JNI_OnLoad");
+		if (found.ok())
+		{
+			jni_on_load = found.value();
+		}
+	}
+	if (jni_on_load.has_value())
+	{
+		const std::array<uint64_t, 8> jni_args = { impl_->jni->javaVm(), 0 };
+		auto call = impl_->scheduler->callFunction(jni_on_load.value(), jni_args);
+		if (!call.ok())
+		{
+			if (call.error().code == ErrorCode::EmulationFault)
+			{
+				impl_->state = Impl::State::Faulted;
+			}
+			return call.error();
+		}
+		if (call.value().exit_code.has_value())
+		{
+			return Error{ ErrorCode::Unsupported, "JNI_OnLoad called exit_group" };
+		}
+		const int64_t version = static_cast<int32_t>(call.value().return_value);
+		if (version < 0)
+		{
+			return Error{ ErrorCode::Unsupported,
+				"JNI_OnLoad returned " + std::to_string(version) };
+		}
+	}
 	return handle;
 }
 
@@ -365,6 +450,44 @@ Result<RuntimeInstance::CallResult> RuntimeInstance::callFunction(GuestVA entry,
 	result.return_value = call.value().return_value;
 	result.exit_code = call.value().exit_code;
 	return result;
+}
+
+Result<uint64_t> RuntimeInstance::callRegisteredNative(std::string_view class_descriptor,
+	std::string_view name,
+	std::string_view signature,
+	const std::array<uint64_t, 8> &args)
+{
+	if (impl_->state != Impl::State::Ready)
+	{
+		return Error{ ErrorCode::InvalidArgument, "RuntimeInstance is not ready to execute" };
+	}
+	return impl_->jni->callRegisteredNative(*impl_->scheduler,
+		class_descriptor,
+		name,
+		signature,
+		args);
+}
+
+Result<GuestVA> RuntimeInstance::lookupRegisteredNative(std::string_view class_descriptor,
+	std::string_view name,
+	std::string_view signature) const
+{
+	return impl_->jni->lookupRegisteredNative(class_descriptor, name, signature);
+}
+
+Result<std::string> RuntimeInstance::jniStringUtf8(uint64_t handle) const
+{
+	return impl_->jni->stringUtf8(handle);
+}
+
+uint32_t RuntimeInstance::addJniListener(observer::EventBus::JniListener listener)
+{
+	return impl_->events->addJniListener(std::move(listener));
+}
+
+bool RuntimeInstance::removeJniListener(uint32_t id)
+{
+	return impl_->events->removeJniListener(id);
 }
 
 uint32_t RuntimeInstance::addSvcListener(observer::EventBus::SvcListener listener)

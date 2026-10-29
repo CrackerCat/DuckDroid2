@@ -258,7 +258,8 @@ int main() {
 
     // libeleven up to the JNI boundary: load the real closure (liblog/libm/
     // libdl/libc++ against the ROM libc), run every constructor, and resolve
-    // JNI_OnLoad itself. Calling it needs a JavaVM, which is M5.
+    // JNI_OnLoad itself. Since M5 loadLibrary also calls it with a real
+    // JavaVM; 05_jni_real checks the registration it performs.
     auto eleven = instance.loadLibrary(DUCKEMU_LIBELEVEN_SO);
     CHECK_RESULT(eleven);
     if (eleven.ok()) {

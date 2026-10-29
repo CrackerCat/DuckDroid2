@@ -67,6 +67,13 @@ duckemu_set_warnings(duckemu_common)
 
 add_library(duckemu_runtime STATIC
   src/runtime/instance/runtime_instance.cpp
+  src/runtime/jni/jni_types.cpp
+  src/runtime/jni/abi/abi_adapter.cpp
+  src/runtime/jni/env/jni_state.cpp
+  src/runtime/jni/envs/all.cpp
+  src/runtime/jni/envs/java_lang.cpp
+  src/runtime/jni/refs/ref_table.cpp
+  src/runtime/jni/world/java_world.cpp
   src/runtime/loader/bionic/shared_globals.cpp
   src/runtime/loader/elf/elf_image.cpp
   src/runtime/loader/module_loader.cpp
@@ -103,6 +110,10 @@ target_link_libraries(duckemu_runtime PUBLIC
   Threads::Threads
 )
 duckemu_set_warnings(duckemu_runtime)
+
+# Target projects. They link the runtime and register their Java environment
+# modules at static-init time; the runtime never names a target.
+add_subdirectory(user_code)
 
 # M0 spike: deliberately flat, no runtime abstractions.
 add_executable(unicorn_spike tools/spike/unicorn_spike.cpp)

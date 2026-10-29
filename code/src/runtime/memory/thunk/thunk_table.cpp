@@ -9,7 +9,9 @@ namespace duckemu::runtime
 namespace
 {
 
-constexpr uint64_t kThunkPageBase = 0x70000000; constexpr uint32_t kMaxThunks = kGuestPageSize / 8;
+constexpr uint64_t kThunkPageBase = 0x70000000; constexpr uint32_t kThunksPerPage = kGuestPageSize / 8;
+// The SVC immediate reserves 15 bits for the index (0x8000 | index).
+constexpr uint32_t kMaxThunks = 0x7FFF;
 constexpr uint32_t kHostStubImmBase = 0x8000;
 constexpr uint32_t kSvcOpcode = 0xD4000001u;
 constexpr uint32_t kRetOpcode = 0xD65F03C0u;
@@ -38,7 +40,20 @@ Result<std::unique_ptr<ThunkTable> > ThunkTable::create(RuntimeMemory &memory)
 Result<GuestVA> ThunkTable::add(std::string_view name, HostStub stub)
 {
 	if (count_ >= kMaxThunks) {
-		return Error{ ErrorCode::OutOfMemory, "thunk page is full" };
+		return Error{ ErrorCode::OutOfMemory, "thunk space is full" };
+	}
+	if (count_ != 0 && count_ % kThunksPerPage == 0)
+	{
+		// Grow by one page, contiguously: entry address = base + index * 8.
+		auto page = memory_.mapFixed(GuestVA{ base_.value() + static_cast<uint64_t>(count_) * 8 },
+			kGuestPageSize,
+			PermRead | PermExec,
+			"thunk-page",
+			false);
+		if (!page.ok())
+		{
+			return page.error();
+		}
 	}
 
 	const uint32_t index = count_;

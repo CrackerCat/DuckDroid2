@@ -132,6 +132,28 @@ uint32_t EventBus::addModuleListener(ModuleListener listener)
 	return id;
 }
 
+uint32_t EventBus::addJniListener(JniListener listener)
+{
+	std::lock_guard<std::mutex> lock(mutex_);
+	const uint32_t id = next_listener_id_++;
+	jni_listeners_.emplace_back(id, std::move(listener));
+	return id;
+}
+
+bool EventBus::removeJniListener(uint32_t id)
+{
+	std::lock_guard<std::mutex> lock(mutex_);
+	for (auto it = jni_listeners_.begin(); it != jni_listeners_.end(); ++it)
+	{
+		if (it->first == id)
+		{
+			jni_listeners_.erase(it);
+			return true;
+		}
+	}
+	return false;
+}
+
 bool EventBus::removeModuleListener(uint32_t id)
 {
 	std::lock_guard<std::mutex> lock(mutex_);
@@ -194,6 +216,18 @@ void EventBus::publishModule(ModuleEvent event)
 	}();
 	event.id = id;
 	deliverAll("module", snapshot, event);
+}
+
+void EventBus::publishJni(JniEvent event)
+{
+	uint64_t id = 0;
+	const std::vector<std::pair<uint32_t, JniListener> > snapshot = [this, &id] {
+		std::lock_guard<std::mutex> lock(mutex_);
+		id = next_jni_event_id_++;
+		return jni_listeners_;
+	}();
+	event.id = id;
+	deliverAll("jni", snapshot, event);
 }
 
 } // namespace duckemu::runtime::observer
