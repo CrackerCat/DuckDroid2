@@ -426,3 +426,19 @@ target_compile_definitions(07a_instance_host PRIVATE
 add_test(NAME 07a_instance_host COMMAND 07a_instance_host)
 set_tests_properties(07a_instance_host PROPERTIES TIMEOUT 120)
 duckemu_set_warnings(07a_instance_host)
+
+# M7 S3: the worker supervisor, with real instance processes spawned through
+# the built duckemu_worker binary. The test plays System over the channel.
+add_executable(07b_worker_supervisor integration/07b_worker_supervisor.cpp)
+target_link_libraries(07b_worker_supervisor PRIVATE
+  duckemu_worker_core
+  duckemu_test_support)
+target_compile_definitions(07b_worker_supervisor PRIVATE
+  DUCKEMU_ROM_BOOTSTRAP="${DUCKEMU_ROM_BOOTSTRAP}"
+  DUCKEMU_ROM_LIB64="${DUCKEMU_ROM_LIB64}"
+  DUCKEMU_LIBELEVEN_SO="${DUCKEMU_LIBELEVEN_CASE_SO}"
+  DUCKEMU_WORKER_EXEC="$<TARGET_FILE:duckemu_worker>")
+add_dependencies(07b_worker_supervisor duckemu_worker)
+add_test(NAME 07b_worker_supervisor COMMAND 07b_worker_supervisor)
+set_tests_properties(07b_worker_supervisor PROPERTIES TIMEOUT 180)
+duckemu_set_warnings(07b_worker_supervisor)

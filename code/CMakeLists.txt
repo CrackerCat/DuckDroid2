@@ -125,6 +125,7 @@ duckemu_set_warnings(duckemu_runtime)
 # M7 wire protocol: framing + JSON messages. Shared by System, Worker and the
 # instance processes; deliberately has no dependency on the runtime.
 add_library(duckemu_protocol STATIC
+  src/protocol/channel.cpp
   src/protocol/frame.cpp
   src/protocol/messages.cpp
   src/protocol/instance_messages.cpp
@@ -145,6 +146,7 @@ add_subdirectory(user_code)
 # process that forks.
 add_library(duckemu_worker_core STATIC
   src/worker/instance_host.cpp
+  src/worker/worker_process.cpp
 )
 target_link_libraries(duckemu_worker_core PUBLIC
   duckemu_protocol

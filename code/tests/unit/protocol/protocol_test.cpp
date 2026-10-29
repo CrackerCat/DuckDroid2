@@ -6,6 +6,7 @@
 #include <string>
 
 #include "common/uds/socket.hpp"
+#include "protocol/channel.hpp"
 #include "protocol/frame.hpp"
 #include "protocol/instance_messages.hpp"
 #include "protocol/messages.hpp"
@@ -235,6 +236,23 @@ void TestErrorResponse()
 	CHECK(parsed.error.code == protocol::error_code::kBadJson);
 }
 
+void TestChannelEnvelope()
+{
+	common::uds::Socket writer;
+	common::uds::Socket reader;
+	std::string error;
+	CHECK(common::uds::make_pair(&writer, &reader, &error));
+
+	CHECK(protocol::write_channel(writer, 7, "{\"id\":\"x\"}", &error));
+	uint32_t conn_id = 0;
+	std::string payload;
+	CHECK(protocol::read_channel(reader, &conn_id, &payload, &error));
+	CHECK_EQ(conn_id, 7u);
+	CHECK(payload == "{\"id\":\"x\"}");
+
+	CHECK(!protocol::write_channel(writer, 1, "", &error));
+}
+
 void TestInstanceMessages()
 {
 	protocol::instance::Message ready;
@@ -306,6 +324,7 @@ int main()
 	TestRequestDefaultsAndRejections();
 	TestResponseRoundTrip();
 	TestErrorResponse();
+	TestChannelEnvelope();
 	TestInstanceMessages();
 	return test::finish("protocol_test");
 }
