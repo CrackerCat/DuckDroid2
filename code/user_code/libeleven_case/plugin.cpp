@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 #include "libeleven_case/plugin.hpp"
 
 #include <array>

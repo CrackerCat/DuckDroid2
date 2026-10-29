@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // libb.so: the leaf of the dependency chain. Nothing imported.
 //
 // b_add() touches a module-local counter so the module carries a .data

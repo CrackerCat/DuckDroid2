@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // Verifies the hand-written slot indices in jni_layout.hpp against the ROM's
 // real jni.h. Any drift (a new SDK adding an entry, a manual edit) fails here
 // before it becomes a silent mis-dispatch in the guest.

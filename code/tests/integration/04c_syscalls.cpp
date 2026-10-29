@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // M4.6 S2 gate: the light syscall surface preinit needs, driven through the
 // ROM libc wrappers. Each call asserts both the success path and the errno
 // the kernel would report, so a handler that silently zeroes is caught.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // Unit tests for the strict Java world and the java.lang environment: no guest
 // code, no engine. Declaration, lookup, strings, fields, native binding.
 

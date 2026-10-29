@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // Loads fine, but references an object symbol nobody provides. The loader must
 // refuse the load with the symbol name in the error.
 

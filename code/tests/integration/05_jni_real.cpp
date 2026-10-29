@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // M5 S3: libeleven's real JNI_OnLoad.
 //
 // The library resolves and calls GetEnv(vm, &env, JNI_VERSION_1_6),

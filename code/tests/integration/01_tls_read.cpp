@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // M1 gate: arm64 bionic TLS layout.
 //
 // On arm64 tpidr_el0 points at slot 0 = DTV; there is no TLS_SLOT_SELF.

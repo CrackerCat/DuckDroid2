@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // M7 S3: the worker supervisor.
 //
 // Two real instance processes (the built duckemu_worker, exec'd with

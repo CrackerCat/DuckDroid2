@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 #include "worker/instance_host.hpp"
 
 #include <chrono>

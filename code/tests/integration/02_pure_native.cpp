@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // M1 gate: a bare native blob runs to completion.
 //
 // Exercises the non-blocking SVC path (getpid/gettid/mmap/mprotect/munmap/

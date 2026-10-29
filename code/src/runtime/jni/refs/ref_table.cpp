@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 #include "runtime/jni/refs/ref_table.hpp"
 
 #include "runtime/jni/world/java_world.hpp"

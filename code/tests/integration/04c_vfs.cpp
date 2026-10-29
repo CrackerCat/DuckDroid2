@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // M4.6 S3: VFS + /proc. The ROM libc runs its preinit through the VFS (the
 // last three unsupported syscalls were openat/faccessat/newfstatat); this gate
 // then drives the same syscalls from guest libc wrappers:

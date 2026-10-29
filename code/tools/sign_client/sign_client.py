@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
 """Minimal UDS client for DuckEmu's signal path.
 
 This is the shape the Web API will use: a 4-byte big-endian length followed by

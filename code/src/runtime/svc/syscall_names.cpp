@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 #include "runtime/svc/syscall_names.hpp"
 
 namespace duckemu::runtime::svc

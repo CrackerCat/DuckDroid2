@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // S1: framing and message validation. The wire format is the contract between
 // System, Worker and Instance, so the edge cases here (short reads, bad
 // lengths, rejected fields) are the ones a malformed client will hit first.

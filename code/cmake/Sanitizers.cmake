@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 # Optional ASan/UBSan for first-party code.
 #
 # Unicorn's TCG generates code at runtime; ASan does not instrument it, which

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // Regression: a module whose DT_NEEDED cannot be resolved must return an
 // error. The failure path used to erase the Module from the registry and then
 // build the message from `registered.soname` / `needed` (a reference into the

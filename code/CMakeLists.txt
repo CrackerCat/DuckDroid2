@@ -1,5 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-only
 cmake_minimum_required(VERSION 3.20)
-project(DuckEmu LANGUAGES C CXX)
+project(DuckDroid2 LANGUAGES C CXX)
 
 # ---------------------------------------------------------------------------
 # Global language settings

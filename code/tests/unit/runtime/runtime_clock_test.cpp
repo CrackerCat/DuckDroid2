@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // Deterministic clock (DuckDroid parity): injected values start at the base
 // and advance exactly 1 ms per read; host mode still returns real time.
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // M2 gate: an unimplemented syscall dumps the guest frame chain (LR chain).
 //
 // The blob builds three nested frame records and calls io_setup (syscall 0),

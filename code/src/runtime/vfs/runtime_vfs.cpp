@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 #include "runtime/vfs/runtime_vfs.hpp"
 
 #include <filesystem>

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // Unit: the ELF reader accepts a real fixture and rejects malformed input.
 // The fixtures are the same ones the 04 gate loads (so-runtime view).
 

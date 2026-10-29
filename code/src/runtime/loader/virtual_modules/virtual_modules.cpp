@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 #include "runtime/loader/virtual_modules/virtual_modules.hpp"
 
 #include <cstring>

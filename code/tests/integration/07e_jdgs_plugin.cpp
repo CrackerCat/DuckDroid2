@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // Worker seam smoke test: the JD target behind worker::make_app_plugin, on the
 // same RuntimeConfig the instance host builds (library search paths plus the
 // guest file system root that holds the trimmed APK).

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // M5 follow-up gate: the JNI surface arrays and variadic calls need.
 //   guest -> host : NewObjectArray / GetArrayLength / GetObjectArrayElement
 //                   build and read an Object[]

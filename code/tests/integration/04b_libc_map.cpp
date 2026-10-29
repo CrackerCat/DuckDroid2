@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // M4.5 gate: map and relocate real bionic without executing it.
 //
 // Loads DuckEmu/bionic/{libc,libm,libdl}.so, then libz.so (APS2 + RELR +

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // jdgs_case: JD 16.1.50 libjdg.so Bridge.main.
 //
 //   ./duckemu_jdgs_case              # initialize, then sign once

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // M6: deterministic wall clock. With setWallTimeNs the guest's
 // clock_gettime(CLOCK_REALTIME) starts at the injected base and advances
 // exactly 1 ms per read (DuckDroid parity), so libeleven's data(int) — whose

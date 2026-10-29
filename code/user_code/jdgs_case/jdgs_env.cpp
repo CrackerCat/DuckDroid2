@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 #include "jdgs_case/jdgs_env.hpp"
 
 #include <cstdint>

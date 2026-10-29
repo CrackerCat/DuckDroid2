@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 #include "runtime/jni/jni_types.hpp"
 
 namespace duckemu::runtime::jni

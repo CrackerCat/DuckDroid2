@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // libeleven project environment.
 //
 // Target-specific Java declarations belong to the project, not to the runtime:

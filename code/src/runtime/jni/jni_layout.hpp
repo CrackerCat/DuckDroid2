@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // JNI table layout, generated from the ROM's libnativehelper jni.h.
 // Slot indices cover the four reserved pointers; an offset into the guest
 // table is always slot * 8. jni_layout_test asserts every constant below

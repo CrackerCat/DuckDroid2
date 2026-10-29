@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 #pragma once
 
 // Signing certificate of the extracted JD 16.1.50 APK (META-INF/JINGDONG.RSA,

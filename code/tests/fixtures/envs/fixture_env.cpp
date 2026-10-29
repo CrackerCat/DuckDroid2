@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 #include "fixtures/envs/fixture_env.hpp"
 
 #include <string>

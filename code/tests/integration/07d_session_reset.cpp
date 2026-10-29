@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // M7 S5: session affinity and instance recycling (M6 warm-pool reset).
 //
 // One instance, max_requests_per_instance=2:

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 #include "system/worker_pool.hpp"
 
 #include <atomic>

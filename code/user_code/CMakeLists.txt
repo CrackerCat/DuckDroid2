@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 # Target projects.
 #
 # The installer is referenced explicitly by the project's main.cpp and by the

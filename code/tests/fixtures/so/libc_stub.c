@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // Provides the link-time definitions so liba.so records DT_NEEDED libc.so and
 // keeps its imports UND. The file is never shipped to the guest search path:
 // the loader must satisfy these symbols from the virtual bionic table.

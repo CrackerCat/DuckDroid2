@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // duckemu_system: the local gateway.
 //
 //   $ duckemu_system --socket-dir DIR --worker-exec PATH

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // liba.so: NEEDED libb.so + liblog.so, and three undefined functions that must
 // be satisfied by the virtual bionic (write / pthread_once) and by the virtual
 // liblog module (log_print).

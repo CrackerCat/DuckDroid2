@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // libeleven_case: load the real library, call the dynamically registered
 // native and print the returned Java String.
 //

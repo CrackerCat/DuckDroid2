@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // M7 S2: one instance process, driven over its control channel.
 //
 // The child runs the same code path the supervisor will spawn: create the

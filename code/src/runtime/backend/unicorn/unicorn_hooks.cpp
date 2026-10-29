@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // Unicorn hooks -> observer events.
 //
 // Three callbacks live here, all installed per engine by UnicornEngine:

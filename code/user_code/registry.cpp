@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // Target-side plugin registry. The worker only knows app ids; everything that
 // names a concrete Android app lives here (and in its project directory).
 

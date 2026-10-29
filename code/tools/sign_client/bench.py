@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
 """Throughput/latency benchmark for the DuckEmu signal path.
 
 Each client keeps one connection, establishes a session on the first request

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 #include "runtime/observer/event_bus.hpp"
 
 #include <exception>

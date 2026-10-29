@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // M5 S4 gate: both directions through the JNI table.
 //   host -> guest : callRegisteredNative enters a dynamically registered native
 //   guest -> host : CallStaticIntMethod reaches a host shim (hostValue)

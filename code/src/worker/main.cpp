@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // duckemu_worker has two modes:
 //
 //   --instance      the RuntimeInstance host. Spawned by the supervisor; it

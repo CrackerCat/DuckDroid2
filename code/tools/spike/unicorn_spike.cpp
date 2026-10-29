@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // M0 spike: pin down Unicorn 2.1 AArch64 semantics with the raw C API.
 //
 // Deliberately flat: no runtime/, no abstractions, no helpers beyond what an

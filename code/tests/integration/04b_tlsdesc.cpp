@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // M4.5 TLSDESC path: clang's Android target only emits R_AARCH64_TLSDESC for
 // __thread access. The loader assigns a static TLS slot, writes a descriptor
 // whose resolver is the guest stub page, and copies the PT_TLS image into the

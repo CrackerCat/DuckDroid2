@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 #include "protocol/channel.hpp"
 
 #include "protocol/frame.hpp"

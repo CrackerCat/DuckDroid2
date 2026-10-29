@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // M5 S2: JNIEnv function table, strict class/method resolution and strings.
 // The fixture .so has no DT_NEEDED; every JNI call it makes goes through the
 // table that JNI_OnLoad receives, so this test isolates the JNI layer from the

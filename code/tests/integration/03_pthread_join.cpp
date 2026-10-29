@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // M3 gate: pthread_create/pthread_join equivalent on a bare blob.
 //
 // The blob hand-writes clone(2)/futex(2): 100 iterations of stack+TLS mmap,

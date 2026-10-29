@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 # Curated warning set shared by every first-party target.
 #
 # third_party targets (unicorn) are never touched by this function.

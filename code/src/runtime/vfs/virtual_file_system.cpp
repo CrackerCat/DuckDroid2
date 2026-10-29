@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 #include "runtime/vfs/virtual_file_system.hpp"
 
 #include <fcntl.h>

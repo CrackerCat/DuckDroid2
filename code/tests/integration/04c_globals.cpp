@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // M4.6 S1: the virtual ld-android.so exposes a real libc_shared_globals block.
 // Calling libc's getauxval() walks that block's auxv, so it proves the offsets
 // (0x418), the virtual __loader_shared_globals thunk, and the auxv contents

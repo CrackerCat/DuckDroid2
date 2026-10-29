@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // Reader for svc.log (M2).
 //
 // The file is written by RuntimeInstance when RuntimeConfig.trace_path is set;

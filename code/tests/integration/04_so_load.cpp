@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // M4 gate: load a real ELF shared object with DT_NEEDED, apply relocations,
 // resolve imports against the virtual bionic and call into the module.
 //

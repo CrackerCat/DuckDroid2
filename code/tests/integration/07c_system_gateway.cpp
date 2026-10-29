@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // M7 S4: System gateway end to end.
 //
 // The test plays the Web API: it connects to <socket-dir>/libeleven.sock,

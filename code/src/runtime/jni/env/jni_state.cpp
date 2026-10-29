@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 #include "runtime/jni/env/jni_state.hpp"
 
 #include <cstdio>

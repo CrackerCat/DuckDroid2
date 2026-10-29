@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // Guest-side JNI fixture for the M5 tests. Built for aarch64-linux-android
 // with -nostdlib; the only imports are none: every JNI call goes through the
 // function table handed over by JNI_OnLoad.

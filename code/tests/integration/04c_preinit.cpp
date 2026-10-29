@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // M4.6 S4: real libc preinit runs. Loading the ROM libc with initializers
 // enabled executes __libc_preinit (constructor priority 1), which initialises
 // globals, scudo and the main thread. malloc/getenv then have to work through

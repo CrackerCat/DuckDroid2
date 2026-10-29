@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 #include "common/uds/socket.hpp"
 
 #include <cerrno>

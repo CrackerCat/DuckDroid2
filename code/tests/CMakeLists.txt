@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 # M0 gate: re-run all nine Unicorn probes.
 add_test(NAME m0_probes COMMAND unicorn_spike all)
 

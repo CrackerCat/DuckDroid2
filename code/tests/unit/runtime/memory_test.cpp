@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // Unit tests for the M1 MemoryManager: region table, split/merge behaviour,
 // MAP_FIXED replacement, cross-region access and brk.
 

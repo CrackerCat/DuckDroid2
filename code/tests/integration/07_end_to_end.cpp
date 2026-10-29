@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // M7 gate: Web API -> System -> Worker -> RuntimeInstance, end to end.
 //
 // One instance, injected clock, data(1..100) over the real UDS protocol:

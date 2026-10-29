@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 #include "runtime/vfs/fd_table.hpp"
 
 #include <utility>

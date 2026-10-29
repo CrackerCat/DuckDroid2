@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // M4.6 S5 (main gate): real bionic pthreads. The ROM libc allocates its own
 // thread stacks/TLS through the StaticTlsLayout we publish, then enters
 // clone(2) exactly like a real pthread_create. This gate drives the libc
