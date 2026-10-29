@@ -162,6 +162,47 @@ int64_t sysBrk(SyscallContext &ctx)
 	return static_cast<int64_t>(result.value().value());
 }
 
+// madvise is advisory: MADV_NORMAL/RANDOM/SEQUENTIAL/WILLNEED/DONTFORK/... do
+// not change the bytes a later read returns, so answering success is exact.
+// MADV_DONTNEED (and MADV_REMOVE, which allocators use for the same purpose)
+// discards anonymous pages, and the guest is entitled to see zeroes
+// afterwards, so the mapped range is cleared instead of left stale.
+int64_t sysMadvise(SyscallContext &ctx)
+{
+	constexpr uint64_t kMadvDontNeed = 4;
+	constexpr uint64_t kMadvRemove = 9;
+	constexpr uint64_t kClearChunkBytes = 64 * 1024;
+
+	const uint64_t address = untagged(ctx.args[0]);
+	const uint64_t length = ctx.args[1];
+	const uint64_t advice = ctx.args[2];
+	if (length == 0) {
+		return 0;
+	}
+	if (address % kGuestPageSize != 0) {
+		return kError(kEinval);
+	}
+	const uint64_t span = pageUp(length);
+	// A real kernel answers ENOMEM for a range that is not fully mapped.
+	for (uint64_t offset = 0; offset < span; offset += kGuestPageSize) {
+		if (!ctx.memory.isMapped(GuestVA{ address + offset })) {
+			return kError(kEnomem);
+		}
+	}
+	if (advice == kMadvDontNeed || advice == kMadvRemove) {
+		const std::vector<uint8_t> zeros(
+			static_cast<size_t>(std::min<uint64_t>(span, kClearChunkBytes)), 0);
+		for (uint64_t offset = 0; offset < span; offset += zeros.size()) {
+			const uint64_t chunk = std::min<uint64_t>(zeros.size(), span - offset);
+			auto written = ctx.memory.write(GuestVA{ address + offset }, zeros.data(), chunk);
+			if (!written.ok()) {
+				return toErrno(written.error());
+			}
+		}
+	}
+	return 0;
+}
+
 } // namespace
 
 std::optional<int64_t> handleMemorySyscall(SyscallContext &ctx, uint32_t number)
@@ -175,6 +216,8 @@ std::optional<int64_t> handleMemorySyscall(SyscallContext &ctx, uint32_t number)
 		return sysMprotect(ctx);
 	case kSysBrk:
 		return sysBrk(ctx);
+	case kSysMadvise:
+		return sysMadvise(ctx);
 	default:
 		return std::nullopt;
 	}

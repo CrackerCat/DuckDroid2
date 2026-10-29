@@ -19,3 +19,14 @@
   # 确定性回放：注入墙钟，之后每次读 +1 ms
   ./build/user_code/duckemu_libeleven_case --wall-time-ns 1792886400000000000 1 5
   ```
+
+- [`jdgs_case/`](jdgs_case/)：京东 16.1.50 `libjdg.so` 的
+  `Bridge.main(I[Ljava/lang/Object;)[Ljava/lang/Object;` 签名调用；带一个只保留
+  9 个条目的精简 APK，app id `jdgs16`。
+
+  ```bash
+  cmake --build build --target duckemu_jdgs_case
+  ./build/user_code/duckemu_jdgs_case
+  # 与 DuckDroid 参考 runner 逐字节一致的回放
+  JDGS_WALL_TIME_MS=1792886400000 JDGS_REPEAT=2 ./build/user_code/duckemu_jdgs_case
+  ```

@@ -23,6 +23,9 @@ struct AppContext
 	std::string library; // the target .so
 	std::string rom_libc; // the ROM's libc.so
 	std::vector<std::string> library_search_paths;
+	// Host directories the guest sees as "/", read-only. Targets that read
+	// their own APK or bundled data need one root holding that tree.
+	std::vector<std::string> filesystem_roots;
 };
 
 // One request as the plugin sees it. Deliberately not protocol::Request: the

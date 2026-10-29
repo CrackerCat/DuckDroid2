@@ -26,6 +26,7 @@ void Usage()
 		"                      --app id=ID,library=PATH,rom-libc=PATH\n"
 		"                            [,instances=N][,workers=N]\n"
 		"                            [,library-path=P1:P2]\n"
+		"                            [,filesystem-root=P1:P2]\n"
 		"                            [,init-timeout-us=N][,invoke-timeout-us=N]\n"
 		"                            [,backoff-ms=N][,max-requests=N]\n"
 		"                      [--wall-time-ns N] [--monotonic-time-ns N]\n"
@@ -105,6 +106,16 @@ bool ParseApp(const std::string &spec, duckemu::system::WorkerSpec *worker, std:
 				if (!path.empty())
 				{
 					worker->library_search_paths.push_back(path);
+				}
+			}
+		}
+		else if (key == "filesystem-root")
+		{
+			for (const std::string &root : Split(value, ':'))
+			{
+				if (!root.empty())
+				{
+					worker->filesystem_roots.push_back(root);
 				}
 			}
 		}

@@ -345,6 +345,11 @@ bool WorkerProcess::Impl::Spawn(Slot &slot, std::string *error)
 		arguments.push_back("--library-path");
 		arguments.push_back(path);
 	}
+	for (const std::string &root : config.app.filesystem_roots)
+	{
+		arguments.push_back("--filesystem-root");
+		arguments.push_back(root);
+	}
 	if (!config.trace_path.empty())
 	{
 		arguments.push_back("--trace");

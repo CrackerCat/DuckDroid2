@@ -259,6 +259,7 @@ endfunction()
 
 duckemu_add_jni_fixture_test(05_jni_env)
 duckemu_add_jni_fixture_test(05_jni_stub)
+duckemu_add_jni_fixture_test(05_jni_arrays)
 
 # M5 S3: the real libeleven JNI_OnLoad (ROM libc + the library's closure).
 add_executable(05_jni_real integration/05_jni_real.cpp)
@@ -285,6 +286,20 @@ target_compile_definitions(06_clock_injection PRIVATE
 add_test(NAME 06_clock_injection COMMAND 06_clock_injection)
 set_tests_properties(06_clock_injection PROPERTIES TIMEOUT 120)
 duckemu_set_warnings(06_clock_injection)
+
+# The JD target through the worker's AppPlugin seam, with the same config the
+# instance host builds (search paths + the guest root holding the trimmed APK).
+add_executable(07e_jdgs_plugin integration/07e_jdgs_plugin.cpp)
+target_link_libraries(07e_jdgs_plugin PRIVATE
+  duckemu_runtime duckemu_test_support duckemu_user_registry)
+target_compile_definitions(07e_jdgs_plugin PRIVATE
+  DUCKEMU_ROM_BOOTSTRAP="${DUCKEMU_ROM_BOOTSTRAP}"
+  DUCKEMU_ROM_LIB64="${DUCKEMU_ROM_LIB64}"
+  DUCKEMU_JDGS_SO="${CMAKE_CURRENT_SOURCE_DIR}/../user_code/jdgs_case/assets/libjdg.so"
+  DUCKEMU_JDGS_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/../user_code/jdgs_case/assets/root")
+add_test(NAME 07e_jdgs_plugin COMMAND 07e_jdgs_plugin)
+set_tests_properties(07e_jdgs_plugin PROPERTIES TIMEOUT 180)
+duckemu_set_warnings(07e_jdgs_plugin)
 
 add_executable(jni_world_test unit/runtime/jni_world_test.cpp)
 target_link_libraries(jni_world_test PRIVATE duckemu_runtime duckemu_test_support)

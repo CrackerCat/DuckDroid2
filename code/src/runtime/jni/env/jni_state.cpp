@@ -47,6 +47,18 @@ constexpr ValueKind kFieldKinds[] = {
 	ValueKind::Double,
 };
 
+// Array slot groups repeat the same eight primitive kinds.
+constexpr ArrayElementKind kArrayKinds[] = {
+	ArrayElementKind::Boolean,
+	ArrayElementKind::Byte,
+	ArrayElementKind::Char,
+	ArrayElementKind::Short,
+	ArrayElementKind::Int,
+	ArrayElementKind::Long,
+	ArrayElementKind::Float,
+	ArrayElementKind::Double,
+};
+
 bool isSupportedJniVersion(int64_t version)
 {
 	return version == kJniVersion1_1 || version == kJniVersion1_2 || version == kJniVersion1_4 ||
@@ -641,6 +653,11 @@ int64_t JniState::invokeEnv(uint32_t slot, HostCallArgs &args)
 		return kJniOk;
 	}
 
+	case JniSlotNewObject:
+	case JniSlotNewObjectV:
+	case JniSlotNewObjectA:
+		return newObject(slot, args);
+
 	default:
 		break;
 	}
@@ -653,6 +670,11 @@ int64_t JniState::invokeEnv(uint32_t slot, HostCallArgs &args)
 	if (decodeFieldSlot(slot).valid)
 	{
 		return accessField(slot, args);
+	}
+	// GetArrayLength, New*Array, *ArrayElements, *ArrayRegion.
+	if (slot >= JniSlotGetArrayLength && slot <= JniSlotSetDoubleArrayRegion)
+	{
+		return accessArray(slot, args);
 	}
 
 	publishUnsupported(slot, tid);
@@ -674,9 +696,9 @@ int64_t JniState::callMethod(uint32_t slot, HostCallArgs &args)
 		publishUnsupported(slot, args.tid);
 		return 0;
 	}
-	if (decoded.variant == CallVariant::VaList || decoded.result == ValueKind::Float ||
-		decoded.result == ValueKind::Double)
+	if (decoded.result == ValueKind::Float || decoded.result == ValueKind::Double)
 	{
+		// The adapter does not return floating-point results in v0.
 		publishUnsupported(slot, args.tid);
 		return 0;
 	}
@@ -822,6 +844,228 @@ int64_t JniState::accessField(uint32_t slot, HostCallArgs &args)
 	return static_cast<int64_t>(value.value());
 }
 
+int64_t JniState::newObject(uint32_t slot, HostCallArgs &args)
+{
+	const uint64_t klass = refs_.resolve(args.x[1]);
+	if (!world_->isClassObject(klass))
+	{
+		publishMissing(observer::JniEventKind::MissingClass, {}, {}, {}, slot, args.tid);
+		return 0;
+	}
+	const MethodRecord *record = world_->method(args.x[2]);
+	if (record == nullptr || record->is_static || record->class_object != klass)
+	{
+		publishMissing(observer::JniEventKind::MissingMethod,
+			std::string(world_->descriptorOfClass(klass)), {}, {}, slot, args.tid);
+		return 0;
+	}
+
+	const CallVariant variant = slot == JniSlotNewObjectV
+					    ? CallVariant::VaList
+					    : (slot == JniSlotNewObjectA ? CallVariant::Array : CallVariant::Plain);
+	auto raw_args = readCallArguments(record->parsed, args.x, variant, memory_);
+	if (!raw_args.ok())
+	{
+		publishUnsupported(slot, args.tid);
+		return 0;
+	}
+	std::vector<uint64_t> resolved;
+	resolved.reserve(raw_args.value().size());
+	for (size_t index = 0; index < raw_args.value().size(); ++index)
+	{
+		resolved.push_back(record->parsed.args[index] == ValueKind::Object
+					   ? refs_.resolve(raw_args.value()[index])
+					   : raw_args.value()[index]);
+	}
+
+	auto object = world_->allocateObject(klass);
+	if (!object.ok())
+	{
+		DUCKEMU_WARN("jni: NewObject failed: %s", object.error().message.c_str());
+		return 0;
+	}
+
+	if (record->native_address != 0)
+	{
+		if (!args.call_guest)
+		{
+			publishUnsupported(slot, args.tid);
+			return 0;
+		}
+		auto env = ensureEnvSlot(args.thread_pointer);
+		auto receiver = newLocal(args.thread_pointer, object.value());
+		if (!env.ok() || !receiver.ok())
+		{
+			return 0;
+		}
+		std::array<uint64_t, 8> guest_args{};
+		guest_args[0] = env.value();
+		guest_args[1] = receiver.value();
+		for (size_t index = 0; index < raw_args.value().size() && index + 2 < guest_args.size();
+			++index)
+		{
+			guest_args[index + 2] = raw_args.value()[index];
+		}
+		auto called = args.call_guest(GuestVA{ record->native_address }, guest_args);
+		if (!called.ok())
+		{
+			DUCKEMU_WARN("jni: nested constructor %s%s failed: %s", record->name.c_str(),
+				record->signature.c_str(), called.error().message.c_str());
+			return 0;
+		}
+	}
+	else if (record->shim)
+	{
+		InvokeContext call;
+		call.receiver = object.value();
+		call.args = std::move(resolved);
+		call.tid = args.tid;
+		auto called = record->shim(*world_, call);
+		if (!called.ok())
+		{
+			DUCKEMU_WARN("jni: %s%s shim failed: %s", record->name.c_str(),
+				record->signature.c_str(), called.error().message.c_str());
+			return 0;
+		}
+	}
+	else
+	{
+		publishMissing(observer::JniEventKind::MissingMethod,
+			std::string(world_->descriptorOfClass(klass)), record->name, record->signature, slot,
+			args.tid);
+		return 0;
+	}
+
+	auto handle = newLocal(args.thread_pointer, object.value());
+	return handle.ok() ? static_cast<int64_t>(handle.value()) : 0;
+}
+
+int64_t JniState::accessArray(uint32_t slot, HostCallArgs &args)
+{
+	const auto local = [&](uint64_t object) -> int64_t {
+		if (object == 0)
+		{
+			return 0;
+		}
+		auto handle = newLocal(args.thread_pointer, object);
+		return handle.ok() ? static_cast<int64_t>(handle.value()) : 0;
+	};
+
+	if (slot == JniSlotGetArrayLength)
+	{
+		auto view = world_->arrayView(refs_.resolve(args.x[1]));
+		return view.ok() ? static_cast<int64_t>(view.value().length) : 0;
+	}
+	if (slot == JniSlotNewObjectArray)
+	{
+		auto array = world_->newArray(ArrayElementKind::Object,
+			args.x[1],
+			refs_.resolve(args.x[2]),
+			refs_.resolve(args.x[3]));
+		if (!array.ok())
+		{
+			DUCKEMU_WARN("jni: NewObjectArray failed: %s", array.error().message.c_str());
+			return 0;
+		}
+		return local(array.value());
+	}
+	if (slot == JniSlotGetObjectArrayElement)
+	{
+		auto element = world_->readArrayElement(refs_.resolve(args.x[1]), args.x[2]);
+		return element.ok() ? local(element.value()) : 0;
+	}
+	if (slot == JniSlotSetObjectArrayElement)
+	{
+		auto written = world_->writeArrayElement(refs_.resolve(args.x[1]),
+			args.x[2],
+			refs_.resolve(args.x[3]));
+		if (!written.ok())
+		{
+			DUCKEMU_WARN("jni: SetObjectArrayElement failed: %s", written.error().message.c_str());
+		}
+		return 0;
+	}
+
+	if (slot >= JniSlotNewBooleanArray && slot <= JniSlotNewDoubleArray)
+	{
+		const ArrayElementKind kind = kArrayKinds[slot - JniSlotNewBooleanArray];
+		auto array = world_->newArray(kind, args.x[1]);
+		if (!array.ok())
+		{
+			DUCKEMU_WARN("jni: New*Array failed: %s", array.error().message.c_str());
+			return 0;
+		}
+		return local(array.value());
+	}
+
+	if (slot >= JniSlotGetBooleanArrayElements && slot <= JniSlotReleaseDoubleArrayElements)
+	{
+		// Element storage lives in guest memory and never moves, so Get* answers
+		// the real buffer (isCopy = false) and Release* is a no-op.
+		if (slot >= JniSlotReleaseBooleanArrayElements)
+		{
+			return 0;
+		}
+		const ArrayElementKind kind = kArrayKinds[slot - JniSlotGetBooleanArrayElements];
+		auto view = world_->arrayView(refs_.resolve(args.x[1]));
+		if (!view.ok() || view.value().kind != kind)
+		{
+			return 0;
+		}
+		if (args.x[2] != 0)
+		{
+			const uint8_t is_copy = 0;
+			(void)memory_.write(GuestVA{ args.x[2] }, &is_copy, sizeof(is_copy));
+		}
+		return static_cast<int64_t>(view.value().storage);
+	}
+
+	const uint32_t region_base = slot >= JniSlotSetBooleanArrayRegion
+					     ? JniSlotSetBooleanArrayRegion
+					     : JniSlotGetBooleanArrayRegion;
+	if (slot >= region_base && slot < region_base + 8)
+	{
+		const bool set = slot >= JniSlotSetBooleanArrayRegion;
+		const ArrayElementKind kind = kArrayKinds[slot - region_base];
+		auto view = world_->arrayView(refs_.resolve(args.x[1]));
+		if (!view.ok() || view.value().kind != kind)
+		{
+			return 0;
+		}
+		const int64_t start = static_cast<int32_t>(args.x[2]);
+		const int64_t count = static_cast<int32_t>(args.x[3]);
+		const uint64_t buffer = args.x[4];
+		if (start < 0 || count < 0 ||
+			static_cast<uint64_t>(start) + static_cast<uint64_t>(count) > view.value().length)
+		{
+			return 0;
+		}
+		const uint64_t element = arrayElementSize(kind);
+		const uint64_t bytes = static_cast<uint64_t>(count) * element;
+		const uint64_t array_address =
+			view.value().storage + static_cast<uint64_t>(start) * element;
+		if (bytes != 0 && buffer != 0)
+		{
+			std::vector<uint8_t> temporary(static_cast<size_t>(bytes));
+			Result<void> done = set ? memory_.read(GuestVA{ buffer }, temporary.data(), bytes) :
+						  memory_.read(GuestVA{ array_address }, temporary.data(), bytes);
+			if (done.ok())
+			{
+				done = set ? memory_.write(GuestVA{ array_address }, temporary.data(), bytes) :
+					     memory_.write(GuestVA{ buffer }, temporary.data(), bytes);
+			}
+			if (!done.ok())
+			{
+				DUCKEMU_WARN("jni: *ArrayRegion failed: %s", done.error().message.c_str());
+			}
+		}
+		return 0;
+	}
+
+	publishUnsupported(slot, args.tid);
+	return 0;
+}
+
 int64_t JniState::invokeVm(uint32_t slot, HostCallArgs &args)
 {
 	switch (slot)
@@ -867,9 +1111,16 @@ Result<uint64_t> JniState::callRegisteredNative(threads::ThreadScheduler &schedu
 	std::string_view signature,
 	const std::array<uint64_t, 8> &args)
 {
+	MethodSignature parsed;
+	if (!parseMethodSignature(signature, &parsed))
+	{
+		return Error{ ErrorCode::InvalidArgument, "malformed native signature" };
+	}
+
 	uint64_t native_address = 0;
 	uint64_t jclass = 0;
 	uint64_t env = 0;
+	std::array<uint64_t, 8> call_args{};
 	{
 		// Resolving and allocating handles writes guest memory; keep it
 		// serialized with any running guest thread.
@@ -892,38 +1143,73 @@ Result<uint64_t> JniState::callRegisteredNative(threads::ThreadScheduler &schedu
 				"native method " + std::string(name) + std::string(signature) + " is not registered" };
 		}
 		native_address = record->native_address;
+		// Everything this call creates belongs to a local frame; only an object
+		// result is promoted back to the caller's frame.
+		refs_.pushFrame(0);
 		auto class_handle = refs_.newLocal(0, klass);
 		if (!class_handle.ok())
 		{
+			refs_.popFrame(0, 0);
 			return class_handle.error();
 		}
 		jclass = class_handle.value();
 		auto env_slot = ensureEnvSlot(0);
 		if (!env_slot.ok())
 		{
+			refs_.popFrame(0, 0);
 			return env_slot.error();
 		}
 		env = env_slot.value();
-	}
 
-	std::array<uint64_t, 8> call_args{};
-	call_args[0] = env;
-	call_args[1] = jclass;
-	for (size_t index = 0; index < 6; ++index)
-	{
-		call_args[index + 2] = args[index];
+		call_args[0] = env;
+		call_args[1] = jclass;
+		for (size_t index = 0; index < 6; ++index)
+		{
+			uint64_t value = args[index];
+			if (index < parsed.args.size() && parsed.args[index] == ValueKind::Object && value != 0)
+			{
+				auto handle = refs_.newLocal(0, value);
+				if (!handle.ok())
+				{
+					refs_.popFrame(0, 0);
+					return handle.error();
+				}
+				value = handle.value();
+			}
+			call_args[index + 2] = value;
+		}
 	}
 
 	auto called = scheduler.callFunction(GuestVA{ native_address }, call_args);
-	if (!called.ok())
+	uint64_t returned = 0;
 	{
-		return called.error();
+		auto execution = scheduler.lockExecution();
+		if (!called.ok())
+		{
+			refs_.popFrame(0, 0);
+			return called.error();
+		}
+		if (called.value().exit_code.has_value())
+		{
+			refs_.popFrame(0, 0);
+			return Error{ ErrorCode::Unsupported, "a registered native called exit_group" };
+		}
+		returned = called.value().return_value;
+		if (parsed.result == ValueKind::Object && returned != 0)
+		{
+			auto promoted = refs_.popFrame(0, returned);
+			if (!promoted.ok())
+			{
+				return promoted.error();
+			}
+			returned = promoted.value();
+		}
+		else
+		{
+			refs_.popFrame(0, 0);
+		}
 	}
-	if (called.value().exit_code.has_value())
-	{
-		return Error{ ErrorCode::Unsupported, "a registered native called exit_group" };
-	}
-	return called.value().return_value;
+	return returned;
 }
 
 Result<GuestVA> JniState::lookupRegisteredNative(std::string_view class_descriptor,
@@ -958,6 +1244,20 @@ Result<std::string> JniState::stringUtf8(uint64_t handle) const
 		return Error{ ErrorCode::InvalidArgument, "null jstring handle" };
 	}
 	return world_->stringUtf8(object);
+}
+
+Result<uint64_t> JniState::resolveHandle(uint64_t handle) const
+{
+	if (handle == 0)
+	{
+		return uint64_t{ 0 };
+	}
+	const uint64_t object = refs_.resolve(handle);
+	if (object == 0)
+	{
+		return Error{ ErrorCode::InvalidArgument, "handle does not name a live reference" };
+	}
+	return object;
 }
 
 } // namespace duckemu::runtime::jni

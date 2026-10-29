@@ -10,6 +10,7 @@ namespace duckemu::runtime::svc
 inline constexpr uint32_t kSysGetcwd = 17;
 inline constexpr uint32_t kSysFaccessat = 48;
 inline constexpr uint32_t kSysOpenat = 56;
+inline constexpr uint32_t kSysMkdirat = 34;
 inline constexpr uint32_t kSysClose = 57;
 inline constexpr uint32_t kSysLseek = 62;
 inline constexpr uint32_t kSysRead = 63;
@@ -49,6 +50,7 @@ inline constexpr uint32_t kSysMunmap = 215;
 inline constexpr uint32_t kSysClone = 220;
 inline constexpr uint32_t kSysMmap = 222;
 inline constexpr uint32_t kSysMprotect = 226;
+inline constexpr uint32_t kSysMadvise = 233;
 
 // Linux/bionic errno values (identical on host and guest).
 inline constexpr int64_t kEperm = 1;

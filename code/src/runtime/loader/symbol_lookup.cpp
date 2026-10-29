@@ -126,6 +126,23 @@ Result<ResolvedSymbol> SymbolResolver::resolve(const Module &requester,
 		}
 	}
 
+	// Import-stub modules named by the requester's DT_NEEDED list: symbols
+	// nobody else defines become return-0 thunks. Checked after real modules,
+	// so a symbol a loaded library really provides is never shadowed.
+	for (const std::string &needed : requester.needed)
+	{
+		if (!virtuals_.isImportStub(needed))
+		{
+			continue;
+		}
+		auto thunk = virtuals_.resolveStub(name);
+		if (!thunk.ok())
+		{
+			return thunk.error();
+		}
+		return ResolvedSymbol{ thunk.value(), nullptr, true, 0, 0 };
+	}
+
 	// Virtual import table. Membership is checked by name; the thunk is created
 	// on first use and cached inside VirtualBionic.
 	if (virtuals_.declaresAny(name))
@@ -230,6 +247,10 @@ Result<GuestVA> SymbolResolver::lookupExported(const Module &module, std::string
 {
 	if (module.is_virtual)
 	{
+		if (virtuals_.isImportStub(module.soname))
+		{
+			return virtuals_.resolveStub(name);
+		}
 		if (!virtuals_.declares(module.soname, name) && !virtuals_.declaresAny(name))
 		{
 			return Error{ ErrorCode::NotFound,

@@ -151,7 +151,18 @@ bool parseMethodSignature(std::string_view signature, MethodSignature *out)
 		return false;
 	}
 	++pos;
-	if (pos >= signature.size() || !parseValueKind(signature, pos, &parsed.result))
+	if (pos >= signature.size())
+	{
+		return false;
+	}
+	if (signature[pos] == 'V')
+	{
+		// Void is a legal result (constructors and void methods); it is only
+		// rejected as an argument, which parseValueKind does.
+		parsed.result = ValueKind::Void;
+		++pos;
+	}
+	else if (!parseValueKind(signature, pos, &parsed.result))
 	{
 		return false;
 	}

@@ -3,6 +3,7 @@
 
 #include <memory>
 
+#include "jdgs_case/plugin.hpp"
 #include "libeleven_case/plugin.hpp"
 #include "worker/app/app_plugin.hpp"
 
@@ -15,6 +16,12 @@ Result<std::unique_ptr<AppPlugin> > make_app_plugin(const AppContext &context)
 	{
 		std::unique_ptr<AppPlugin> plugin =
 			std::make_unique<user::libeleven::Plugin>(context);
+		return Result<std::unique_ptr<AppPlugin> >(std::move(plugin));
+	}
+	if (context.app == "jdgs16")
+	{
+		std::unique_ptr<AppPlugin> plugin =
+			std::make_unique<user::jdgs::Plugin>(context);
 		return Result<std::unique_ptr<AppPlugin> >(std::move(plugin));
 	}
 	return Error{ ErrorCode::NotFound, "unknown app '" + context.app + "'" };

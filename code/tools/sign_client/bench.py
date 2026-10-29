@@ -6,6 +6,13 @@ and pins to that instance afterwards. Warmup requests are excluded from the
 statistics; only the final summary is printed.
 
     python3 bench.py /tmp/duckemu/libeleven.sock --clients 8 --requests 10000
+    python3 bench.py /tmp/duckemu-jdgs/jdgs16.sock --app jdgs16 \
+        --clients 8 --requests 2000 --instances 4
+
+--app selects the target (the System routes on it); --param sets sign
+parameters for targets that take named inputs. For jdgs16 every result is
+parsed as JSON and must carry b1..b7, so a wrong result counts as an error
+instead of a fast success.
 """
 
 import argparse
@@ -50,14 +57,14 @@ def connect(path):
             time.sleep(0.05)
 
 
-def wait_for_instances(path, target, timeout_s=120):
+def wait_for_instances(path, target, app, params, timeout_s=120):
     """Wait until `target` distinct instances answer (all warm)."""
     seen = set()
     deadline = time.time() + timeout_s
     sock = connect(path)
     try:
         while len(seen) < target and time.time() < deadline:
-            response = rpc(sock, make_request(0, 0, None))
+            response = rpc(sock, make_request(0, 0, None, app, params))
             if response.get("ok"):
                 seen.add(response["instance"])
             else:
@@ -67,26 +74,54 @@ def wait_for_instances(path, target, timeout_s=120):
     return seen
 
 
-def make_request(client, value, session):
+def make_request(client, value, session, app, params):
+    if app == "libeleven":
+        # libeleven's data(int): the value is the request payload and every
+        # request uses a different one.
+        request_params = {"value": str(value)}
+    else:
+        request_params = dict(params)
     request = {
         "version": 1,
-        "id": "bench-%d-%d" % (client, value),
-        "app": "libeleven",
+        "id": "bench-%s-%d-%d" % (app, client, value),
+        "app": app,
         "op": "sign",
-        "params": {"value": str(value)},
+        "params": request_params,
     }
     if session:
         request["session"] = {"id": session}
     return request
 
 
-def run_client(index, path, count, barrier, results, lock):
+JDGS_KEYS = ("b1", "b2", "b3", "b4", "b5", "b6", "b7")
+
+
+def validate(app, response):
+    """App-specific result check; returns (ok, detail)."""
+    signature = response.get("result", {}).get("value", "")
+    if not isinstance(signature, str) or not signature:
+        return False, "empty sign result"
+    if app != "jdgs16":
+        return True, ""
+    try:
+        decoded = json.loads(signature)
+    except json.JSONDecodeError:
+        return False, "sign is not JSON: " + signature[:60]
+    if not isinstance(decoded, dict):
+        return False, "sign is not a JSON object"
+    missing = [key for key in JDGS_KEYS if not isinstance(decoded.get(key), str)]
+    if missing:
+        return False, "missing " + ",".join(missing)
+    return True, ""
+
+
+def run_client(index, path, count, app, params, barrier, results, lock, bad_samples):
     try:
         sock = connect(path)
         # Warmup / session establishment (excluded from the statistics).
         session = None
         while True:
-            response = rpc(sock, make_request(index, 0, None))
+            response = rpc(sock, make_request(index, 0, None, app, params))
             if response.get("ok"):
                 session = response["instance"]
                 break
@@ -104,12 +139,12 @@ def run_client(index, path, count, barrier, results, lock):
             response = None
             while True:
                 try:
-                    response = rpc(sock, make_request(index, value, session))
+                    response = rpc(sock, make_request(index, value, session, app, params))
                 except (ConnectionError, OSError):
                     # Worker restarted: reconnect and re-establish the session.
                     sock.close()
                     sock = connect(path)
-                    response = rpc(sock, make_request(index, value, None))
+                    response = rpc(sock, make_request(index, value, None, app, params))
                 if response.get("ok"):
                     break
                 code = response.get("error", {}).get("code")
@@ -118,7 +153,7 @@ def run_client(index, path, count, barrier, results, lock):
                     time.sleep(0.002)
                     continue
                 if code in ("SESSION_NOT_FOUND", "SESSION_GONE"):
-                    response = rpc(sock, make_request(index, value, None))
+                    response = rpc(sock, make_request(index, value, None, app, params))
                     if response.get("ok"):
                         session = response["instance"]
                         break
@@ -126,8 +161,15 @@ def run_client(index, path, count, barrier, results, lock):
                 break
             elapsed = time.perf_counter() - start
             if response is not None and response.get("ok"):
-                latencies.append(elapsed)
-                instances[response["instance"]] += 1
+                valid, detail = validate(app, response)
+                if valid:
+                    latencies.append(elapsed)
+                    instances[response["instance"]] += 1
+                else:
+                    errors += 1
+                    with lock:
+                        if len(bad_samples) < 3:
+                            bad_samples.append(detail)
         with lock:
             results.append((latencies, retries, errors, instances))
     finally:
@@ -149,9 +191,21 @@ def main():
                         help="total requests across all clients")
     parser.add_argument("--instances", type=int, default=4,
                         help="wait for this many warm instances before timing")
+    parser.add_argument("--app", default="libeleven",
+                        help="target id the System routes on (default libeleven)")
+    parser.add_argument("--param", action="append", default=[],
+                        metavar="KEY=VALUE",
+                        help="sign parameter sent with every request (repeatable)")
     args = parser.parse_args()
 
-    ready = wait_for_instances(args.socket, args.instances)
+    params = {}
+    for item in args.param:
+        key, separator, value = item.partition("=")
+        if not separator or not key:
+            parser.error("--param expects KEY=VALUE, got %r" % item)
+        params[key] = value
+
+    ready = wait_for_instances(args.socket, args.instances, args.app, params)
     print("warm       : %d/%d instances" % (len(ready), args.instances))
 
     per_client = args.requests // args.clients
@@ -162,10 +216,12 @@ def main():
 
     barrier = threading.Barrier(args.clients + 1)
     results = []
+    bad_samples = []
     lock = threading.Lock()
     threads = [
         threading.Thread(target=run_client,
-                         args=(index, args.socket, per_client, barrier, results, lock))
+                         args=(index, args.socket, per_client, args.app, params,
+                               barrier, results, lock, bad_samples))
         for index in range(args.clients)
     ]
     for thread in threads:
@@ -203,6 +259,8 @@ def main():
               percentile(latencies, 0.99) * 1e3,
               (latencies[-1] if latencies else 0.0) * 1e3))
     print("retries    : %d OVERLOADED" % retries)
+    if bad_samples:
+        print("bad results: " + " | ".join(bad_samples))
     if instances:
         print("instances  : " + "  ".join(
             "%s=%d" % (name, count) for name, count in sorted(instances.items())))

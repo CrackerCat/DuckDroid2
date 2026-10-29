@@ -485,6 +485,11 @@ Result<std::string> RuntimeInstance::jniStringUtf8(uint64_t handle) const
 	return impl_->jni->stringUtf8(handle);
 }
 
+Result<uint64_t> RuntimeInstance::jniResolveHandle(uint64_t handle) const
+{
+	return impl_->jni->resolveHandle(handle);
+}
+
 void RuntimeInstance::setWallTimeNs(uint64_t ns)
 {
 	auto execution = impl_->scheduler->lockExecution();

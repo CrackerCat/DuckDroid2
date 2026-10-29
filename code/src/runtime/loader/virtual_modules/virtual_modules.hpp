@@ -36,6 +36,15 @@ class VirtualBionic
 	// True for the module names that are satisfied without a file.
 	[[nodiscard]] bool isVirtualModule(std::string_view soname) const noexcept;
 
+	// Platform modules that are only needed so an app SO can resolve its
+	// DT_NEEDED list. Their symbols are import stubs returning 0; the target
+	// must not call them on the supported path. Resolution is scoped to a
+	// requester that names the module, so global lookup stays strict.
+	[[nodiscard]] bool isImportStub(std::string_view soname) const noexcept;
+
+	// Generic return-0 thunk for a symbol from an import-stub module.
+	Result<GuestVA> resolveStub(std::string_view symbol);
+
 	// Does `module_soname` declare `symbol`? Membership only; use resolve()
 	// to get an address.
 	[[nodiscard]] bool declares(std::string_view module_soname, std::string_view symbol) const noexcept;

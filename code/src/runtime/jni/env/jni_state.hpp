@@ -77,6 +77,9 @@ class JniState
 		std::string_view signature) const;
 	// Decodes a jstring handle (object results of registered natives).
 	Result<std::string> stringUtf8(uint64_t handle) const;
+	// Object address behind a live reference (local or global). Host callers
+	// use it to inspect an object returned by callRegisteredNative.
+	Result<uint64_t> resolveHandle(uint64_t handle) const;
 
     private:
 	JniState(RuntimeMemory &memory,
@@ -90,6 +93,8 @@ class JniState
 	Result<std::string> readUtf8(uint64_t address);
 	int64_t callMethod(uint32_t slot, HostCallArgs &args);
 	int64_t accessField(uint32_t slot, HostCallArgs &args);
+	int64_t accessArray(uint32_t slot, HostCallArgs &args);
+	int64_t newObject(uint32_t slot, HostCallArgs &args);
 	void publishMissing(observer::JniEventKind kind,
 		std::string class_descriptor,
 		std::string name,

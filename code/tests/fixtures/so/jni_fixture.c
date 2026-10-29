@@ -2,6 +2,7 @@
 // with -nostdlib; the only imports are none: every JNI call goes through the
 // function table handed over by JNI_OnLoad.
 #include <jni.h>
+#include <stdarg.h>
 
 #define JNI_FIXTURE_EXPORT __attribute__((visibility("default")))
 
@@ -70,6 +71,114 @@ static jint string_length(JNIEnv *env, jclass klass)
 	return (*env)->GetStringLength(env, text);
 }
 
+// Object arrays: build a one-element String[] from a string the JNI table
+// created, then read it back through a local reference.
+static jint object_array_length(JNIEnv *env, jclass klass)
+{
+	(void)klass;
+	jclass string_class = (*env)->FindClass(env, "java/lang/String");
+	if (string_class == 0)
+	{
+		return -103;
+	}
+	jstring text = (*env)->NewStringUTF(env, "hi");
+	if (text == 0)
+	{
+		return -104;
+	}
+	jobjectArray array = (*env)->NewObjectArray(env, 1, string_class, text);
+	if (array == 0)
+	{
+		return -105;
+	}
+	if ((*env)->GetArrayLength(env, array) != 1)
+	{
+		return -106;
+	}
+	jobject element = (*env)->GetObjectArrayElement(env, array, 0);
+	if (element == 0)
+	{
+		return -107;
+	}
+	const char *characters = (*env)->GetStringUTFChars(env, (jstring)element, 0);
+	if (characters == 0)
+	{
+		return -108;
+	}
+	const jint length = (*env)->GetStringLength(env, (jstring)element);
+	(*env)->ReleaseStringUTFChars(env, (jstring)element, characters);
+	return length;
+}
+
+// NewObjectV reads its arguments from a caller-owned va_list, exactly as
+// libjdg-style native code does. The constructor shim stores the value.
+static jobject new_object_v(JNIEnv *env, jclass klass, jmethodID ctor, ...)
+{
+	va_list args;
+	va_start(args, ctor);
+	jobject object = (*env)->NewObjectV(env, klass, ctor, args);
+	va_end(args);
+	return object;
+}
+
+static jint new_object_value(JNIEnv *env, jclass fixture)
+{
+	(void)fixture;
+	jclass box = (*env)->FindClass(env, "env/Box");
+	if (box == 0)
+	{
+		return -110;
+	}
+	jmethodID ctor = (*env)->GetMethodID(env, box, "<init>", "(I)V");
+	if (ctor == 0)
+	{
+		return -111;
+	}
+	jobject object = new_object_v(env, box, ctor, (jint)7);
+	if (object == 0)
+	{
+		return -112;
+	}
+	jfieldID value = (*env)->GetFieldID(env, box, "value", "I");
+	if (value == 0)
+	{
+		return -113;
+	}
+	return (*env)->GetIntField(env, object, value);
+}
+
+// CallStaticObjectMethodV: the host shim receives a jstring and a jint from a
+// va_list and returns a new string.
+static jobject call_static_object_v(JNIEnv *env, jclass klass, jmethodID method, ...)
+{
+	va_list args;
+	va_start(args, method);
+	jobject result = (*env)->CallStaticObjectMethodV(env, klass, method, args);
+	va_end(args);
+	return result;
+}
+
+static jint call_host_v(JNIEnv *env, jclass fixture)
+{
+	jmethodID method = (*env)->GetStaticMethodID(
+		env, fixture, "hostJoin", "(Ljava/lang/String;I)Ljava/lang/String;");
+	if (method == 0)
+	{
+		return -120;
+	}
+	jstring argument = (*env)->NewStringUTF(env, "hi");
+	if (argument == 0)
+	{
+		return -121;
+	}
+	jobject result = call_static_object_v(env, fixture, method, argument, (jint)7);
+	if (result == 0)
+	{
+		return -122;
+	}
+	return (*env)->GetStringLength(env, (jstring)result);
+}
+
 // File scope so the array is initialized at load time; a local array would
 // make the compiler emit a memcpy import.
 static const JNINativeMethod kMethods[] = {
@@ -81,6 +190,9 @@ static const JNINativeMethod kMethods[] = {
 	{ "findDeclared", "()I", (void *)find_declared },
 	{ "makeString", "()Ljava/lang/String;", (void *)make_string },
 	{ "stringLength", "()I", (void *)string_length },
+	{ "objectArrayLength", "()I", (void *)object_array_length },
+	{ "newObjectValue", "()I", (void *)new_object_value },
+	{ "callHostV", "()I", (void *)call_host_v },
 };
 
 JNI_FIXTURE_EXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved)

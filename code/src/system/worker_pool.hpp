@@ -19,6 +19,9 @@ struct WorkerSpec
 	std::string library;
 	std::string rom_libc;
 	std::vector<std::string> library_search_paths;
+	// Host directories the guest sees as "/", read-only. Targets that read
+	// their own APK need one root holding that tree.
+	std::vector<std::string> filesystem_roots;
 	uint32_t workers = 1;
 	uint32_t instances = 1;
 	uint64_t init_timeout_us = 120ull * 1000 * 1000;

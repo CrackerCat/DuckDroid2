@@ -74,6 +74,23 @@ struct MallocState
 	uint64_t size = 0;
 };
 
+// Import-stub modules: present in an app SO's DT_NEEDED list, but their real
+// images pull in the whole framework (or the mainline APEXes). Symbols are
+// bound to a return-0 thunk. The signing paths served so far never call them.
+constexpr std::string_view kImportStubModules[] = { "libandroid.so", "libmediandk.so" };
+
+bool isImportStubModuleName(std::string_view soname)
+{
+	for (const std::string_view name : kImportStubModules)
+	{
+		if (name == soname)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
 bool matches(const VirtualEntry *entries, size_t count, std::string_view module, std::string_view symbol)
 {
 	for (size_t i = 0; i < count; ++i)
@@ -109,7 +126,7 @@ VirtualBionic::VirtualBionic(RuntimeMemory &memory, ThunkTable &thunks, bool ena
 
 bool VirtualBionic::isVirtualModule(std::string_view soname) const noexcept
 {
-	if (soname == "ld-android.so")
+	if (soname == "ld-android.so" || isImportStubModuleName(soname))
 	{
 		return true;
 	}
@@ -127,8 +144,37 @@ bool VirtualBionic::isVirtualModule(std::string_view soname) const noexcept
 	return false;
 }
 
+bool VirtualBionic::isImportStub(std::string_view soname) const noexcept
+{
+	return isImportStubModuleName(soname);
+}
+
+Result<GuestVA> VirtualBionic::resolveStub(std::string_view symbol)
+{
+	// One thunk per name, so repeated relocations share the address.
+	for (const auto &entry : thunks_by_name_)
+	{
+		if (entry.first == symbol)
+		{
+			return entry.second;
+		}
+	}
+	auto thunk = thunks_.add(std::string("stub:") + std::string(symbol),
+		[](HostCallArgs &) -> int64_t { return 0; });
+	if (!thunk.ok())
+	{
+		return thunk.error();
+	}
+	thunks_by_name_.emplace_back(std::string(symbol), thunk.value());
+	return thunk.value();
+}
+
 bool VirtualBionic::declares(std::string_view module_soname, std::string_view symbol) const noexcept
 {
+	if (isImportStubModuleName(module_soname))
+	{
+		return true;
+	}
 	if (matches(kLinkerEntries, std::size(kLinkerEntries), module_soname, symbol))
 	{
 		return true;

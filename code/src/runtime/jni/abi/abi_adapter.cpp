@@ -1,9 +1,28 @@
 #include "runtime/jni/abi/abi_adapter.hpp"
 
+#include <cstddef>
+
 #include "runtime/memory/address_space.hpp"
 
 namespace duckemu::runtime::jni
 {
+namespace
+{
+
+// AAPCS64 va_list: the callee's save-area cursors. A variadic integer
+// argument comes from the general-purpose save area while gr_offs is
+// negative, then from the overflow area above stack.
+struct Aarch64VaList
+{
+	uint64_t stack = 0;
+	uint64_t gr_top = 0;
+	uint64_t vr_top = 0;
+	int32_t gr_offs = 0;
+	int32_t vr_offs = 0;
+};
+static_assert(sizeof(Aarch64VaList) == 32, "AAPCS64 va_list layout");
+
+} // namespace
 
 Result<std::vector<uint64_t> > readCallArguments(const MethodSignature &signature,
 	const std::array<uint64_t, 8> &registers,
@@ -15,8 +34,58 @@ Result<std::vector<uint64_t> > readCallArguments(const MethodSignature &signatur
 
 	if (variant == CallVariant::VaList)
 	{
-		return Error{ ErrorCode::Unsupported,
-			"Call<Type>MethodV (va_list) is not implemented" };
+		// x3 points at the guest va_list owned by the variadic caller. Consume
+		// it in declaration order and write the advanced cursors back, exactly
+		// as va_arg would.
+		const uint64_t address = registers[3];
+		if (address == 0)
+		{
+			return Error{ ErrorCode::InvalidArgument, "Call<Type>MethodV with a null va_list" };
+		}
+		Aarch64VaList list;
+		auto read = memory.read(GuestVA{ address }, &list, sizeof(list));
+		if (!read.ok())
+		{
+			return read.error();
+		}
+		for (ValueKind kind : signature.args)
+		{
+			if (kind == ValueKind::Float || kind == ValueKind::Double)
+			{
+				return Error{ ErrorCode::Unsupported,
+					"Call<Type>MethodV with floating-point arguments is not implemented" };
+			}
+			uint64_t slot = 0;
+			if (list.gr_offs < 0)
+			{
+				slot = list.gr_top + static_cast<uint64_t>(static_cast<int64_t>(list.gr_offs));
+				list.gr_offs += 8;
+			}
+			else
+			{
+				slot = list.stack;
+				list.stack += 8;
+			}
+			uint64_t value = 0;
+			auto loaded = memory.read(GuestVA{ slot }, &value, sizeof(value));
+			if (!loaded.ok())
+			{
+				return loaded.error();
+			}
+			args.push_back(value);
+		}
+		auto written = memory.write(GuestVA{ address }, &list.stack, sizeof(list.stack));
+		if (!written.ok())
+		{
+			return written.error();
+		}
+		written = memory.write(GuestVA{ address + offsetof(Aarch64VaList, gr_offs) },
+			&list.gr_offs, sizeof(list.gr_offs));
+		if (!written.ok())
+		{
+			return written.error();
+		}
+		return args;
 	}
 
 	if (variant == CallVariant::Array)

@@ -122,6 +122,11 @@ class RuntimeInstance
 	// UTF-8 contents of a jstring handle returned by guest code.
 	Result<std::string> jniStringUtf8(uint64_t handle) const;
 
+	// Object address behind a live JNI reference. Host runners use it to
+	// inspect an object returned by callRegisteredNative; the environment pack
+	// then reads the object through JavaWorld.
+	Result<uint64_t> jniResolveHandle(uint64_t handle) const;
+
 	// Deterministic time (DuckDroid parity). Default: the host clock. After
 	// setWallTimeNs/setMonotonicTimeNs every read returns the current value and
 	// advances exactly 1 ms, so a replay is byte-identical. Setting the value

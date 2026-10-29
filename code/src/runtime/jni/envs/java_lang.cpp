@@ -2,9 +2,11 @@
 #include <string>
 #include <utility>
 
+#include "common/id/ids.hpp"
 #include "runtime/clock/runtime_clock.hpp"
 #include "runtime/jni/envs/envs.hpp"
 #include "runtime/jni/world/java_world.hpp"
+#include "runtime/memory/address_space.hpp"
 
 namespace duckemu::runtime::jni::envs
 {
@@ -166,7 +168,83 @@ Result<void> installString(JavaWorld &world)
 		[](JavaWorld &, InvokeContext &call) -> Result<uint64_t> {
 			return call.receiver;
 		});
-	return result;
+	if (!result.ok())
+	{
+		return result;
+	}
+	// String([B, String charsetName)V: native code commonly assembles text by
+	// passing the byte[] and a charset name. The served targets pass UTF-8, so
+	// the name is accepted but not interpreted.
+	result = declare(world, klass, "<init>", "([BLjava/lang/String;)V", false,
+		[](JavaWorld &java, InvokeContext &call) -> Result<uint64_t> {
+			if (call.args.size() != 2 || call.args[0] == 0)
+			{
+				return Error{ ErrorCode::InvalidArgument,
+					"String([B,String) needs a byte array" };
+			}
+			auto view = java.arrayView(call.args[0]);
+			if (!view.ok())
+			{
+				return view.error();
+			}
+			if (view.value().kind != ArrayElementKind::Byte)
+			{
+				return Error{ ErrorCode::InvalidArgument,
+					"String([B,String) expects a byte[]" };
+			}
+			std::string bytes(static_cast<size_t>(view.value().length), '\0');
+			if (!bytes.empty())
+			{
+				auto read = java.memory().read(GuestVA{ view.value().storage },
+					bytes.data(),
+					bytes.size());
+				if (!read.ok())
+				{
+					return read.error();
+				}
+			}
+			auto set = java.setStringContent(call.receiver, bytes);
+			if (!set.ok())
+			{
+				return set.error();
+			}
+			return uint64_t{ 0 };
+		});
+	if (!result.ok())
+	{
+		return result;
+	}
+	// String.getBytes(String charsetName)[B: the charset name is accepted but
+	// the bytes are always UTF-8, matching String([B, String) above.
+	return declare(world, klass, "getBytes", "(Ljava/lang/String;)[B", false,
+		[](JavaWorld &java, InvokeContext &call) -> Result<uint64_t> {
+			auto text = java.stringUtf8(call.receiver);
+			if (!text.ok())
+			{
+				return text.error();
+			}
+			auto array = java.newArray(ArrayElementKind::Byte, text.value().size());
+			if (!array.ok())
+			{
+				return array.error();
+			}
+			auto view = java.arrayView(array.value());
+			if (!view.ok())
+			{
+				return view.error();
+			}
+			if (!text.value().empty())
+			{
+				auto written = java.memory().write(GuestVA{ view.value().storage },
+					text.value().data(),
+					text.value().size());
+				if (!written.ok())
+				{
+					return written.error();
+				}
+			}
+			return array.value();
+		});
 }
 
 Result<void> installSystem(JavaWorld &world)

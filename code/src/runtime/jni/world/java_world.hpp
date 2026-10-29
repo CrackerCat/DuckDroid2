@@ -34,6 +34,33 @@ struct InvokeContext
 // Returns a primitive value, or an object address for reference results.
 using ShimHandler = std::function<Result<uint64_t>(JavaWorld &, InvokeContext &)>;
 
+// Element kind of a Java array. Object arrays carry the element class in
+// ArrayView::element_class; primitive arrays never use it.
+enum class ArrayElementKind : uint8_t
+{
+	Boolean = 0,
+	Byte,
+	Char,
+	Short,
+	Int,
+	Long,
+	Float,
+	Double,
+	Object,
+};
+
+// Size in bytes of one primitive array element; 8 for object arrays (the
+// element is a guest object address). Void is not an array kind.
+uint64_t arrayElementSize(ArrayElementKind kind);
+
+struct ArrayView
+{
+	ArrayElementKind kind = ArrayElementKind::Object;
+	uint64_t length = 0;
+	uint64_t storage = 0;
+	uint64_t element_class = 0;
+};
+
 struct MethodRecord
 {
 	uint64_t id = 0;
@@ -134,11 +161,27 @@ class JavaWorld
 	Result<uint64_t> readStaticField(uint64_t class_object, uint64_t field_id) const;
 	Result<void> writeStaticField(uint64_t class_object, uint64_t field_id, uint64_t value);
 
+	// -- Arrays --------------------------------------------------------------
+	// Arrays are values, not declared types: their class ("[B",
+	// "[Ljava/lang/Object;") is created on demand and is deliberately not
+	// reachable through FindClass. Element storage lives in the JNI arena.
+	// |initial_element| pre-fills object arrays; 0 leaves them null.
+	Result<uint64_t> newArray(ArrayElementKind kind,
+		uint64_t length,
+		uint64_t element_class = 0,
+		uint64_t initial_element = 0);
+	Result<ArrayView> arrayView(uint64_t object) const;
+	Result<uint64_t> readArrayElement(uint64_t object, uint64_t index) const;
+	Result<void> writeArrayElement(uint64_t object, uint64_t index, uint64_t value);
+
 	// -- Strings -------------------------------------------------------------
 	// M5 stores UTF-16 and converts through standard UTF-8. Modified UTF-8
 	// (NUL as C0 80, surrogate pairs) is a known limitation; the current
 	// consumers are ASCII-only.
 	Result<uint64_t> newString(std::string_view utf8);
+	// Attaches UTF-8 contents to an object that was allocated as java/lang/String
+	// by NewObject, before its constructor shim runs.
+	Result<void> setStringContent(uint64_t object, std::string_view utf8);
 	Result<std::string> stringUtf8(uint64_t object) const;
 	Result<uint64_t> stringLength(uint64_t object) const;
 	// UTF-16 code unit at |index| (String.charAt).
@@ -211,6 +254,12 @@ class JavaWorld
 		uint64_t class_object = 0;
 		bool is_class = false;
 		std::unordered_map<uint64_t, uint64_t> fields; // field id -> value
+		// Array payload; array_storage is a guest address in the JNI arena.
+		bool is_array = false;
+		ArrayElementKind array_kind = ArrayElementKind::Object;
+		uint64_t array_length = 0;
+		uint64_t array_storage = 0;
+		uint64_t array_element_class = 0;
 	};
 
 	[[nodiscard]] const ClassRecord *classRecord(uint64_t class_object) const;

@@ -169,7 +169,7 @@ if (result.ok() && result.value() != 0) {
 |---|---|---|
 | `world.declareClass(descriptor, super)` | 声明类 | descriptor 用 `/`；`super` 未知时传 `""`；重复声明且父类一致时幂等 |
 | `world.declareMethod(class, name, signature, is_static, shim)` | 声明方法 | native 方法传 `{}`；host 方法给 shim |
-| `world.declareField(class, name, signature, is_static)` | 声明字段 | signature 是单字符 Java 类型（`I`/`J`/`L...;` 等） |
+| `world.declareField(class, name, signature, is_static)` | 声明字段 | signature 是 `I`/`J` 这样的基本类型，或 `Ljava/lang/String;`、`[L...;` 这样的完整描述符 |
 
 `is_static` **必须和 Java 侧一致**，因为 `RegisterNatives` 不携带静态性：
 
@@ -204,6 +204,14 @@ if (result.ok() && result.value() != 0) {
 `RuntimeInstance::callRegisteredNative` 由 runtime 填 `JNIEnv*`（x0）和
 `jclass`（x1），参数从 x2 开始，最多 6 个。因此它调用的是**静态** native。
 返回值是 x0；对象结果是 JNI 句柄，用 `jniStringUtf8` 等辅助函数解析。
+
+- **对象参数**按签名判断：`L...;` / `[...` 位置的实参是**对象地址**，
+  runtime 会把它包成本地引用；基本类型按原始值传。
+- **对象结果**是句柄：`jniResolveHandle(handle)` 得到对象地址，再由项目环境
+  用 `JavaWorld`（`classOf` / `arrayView` / `readInstanceField` 等）读取。
+  `callRegisteredNative` 为每次调用建立本地帧，只把对象结果提升回调用者帧。
+- 项目需要在 install 时保存 `JavaWorld*` 才能构建参数对象（字符串、数组）。
+  一个进程一个实例时这是安全的；worker 的实例进程正好满足。
 
 ---
 
@@ -263,4 +271,22 @@ libeleven_case/
 ```bash
 cmake --build build --target duckemu_libeleven_case
 ./build/user_code/duckemu_libeleven_case 1 5
+```
+
+`jdgs_case/` 是带对象图、数组、变参调用和 guest 文件系统的真实目标：
+
+```text
+jdgs_case/
+├── jdgs_env.hpp/.cpp    # Bridge + 包签名链 + Integer/File；Object[] 参数与结果
+├── main.cpp             # init(103) → sign(101) → 解析 [Ljava/lang/Object;
+├── plugin.hpp/.cpp      # worker 适配，app id jdgs16
+├── jdgs_cert.h          # 内嵌证书
+└── assets/
+    ├── libjdg.so
+    └── root/.../base.apk   # 精简 APK，经 filesystem_roots 挂载
+```
+
+```bash
+cmake --build build --target duckemu_jdgs_case
+./build/user_code/duckemu_jdgs_case
 ```

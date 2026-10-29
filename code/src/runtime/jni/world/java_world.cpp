@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstring>
 #include <utility>
+#include <vector>
 
 #include "runtime/memory/address_space.hpp"
 
@@ -12,6 +13,7 @@ namespace
 {
 
 constexpr uint64_t kArenaChunkSize = 0x10000;
+constexpr uint64_t kMaxArrayLength = 1u << 24;
 constexpr uint32_t kRecordKindClass = 0;
 constexpr uint32_t kRecordKindObject = 1;
 constexpr uint32_t kRecordKindMethod = 2;
@@ -133,7 +135,54 @@ std::string utf16ToUtf8(std::u16string_view text)
 	return out;
 }
 
+char arrayPrimitiveTag(ArrayElementKind kind)
+{
+	switch (kind)
+	{
+	case ArrayElementKind::Boolean:
+		return 'Z';
+	case ArrayElementKind::Byte:
+		return 'B';
+	case ArrayElementKind::Char:
+		return 'C';
+	case ArrayElementKind::Short:
+		return 'S';
+	case ArrayElementKind::Int:
+		return 'I';
+	case ArrayElementKind::Long:
+		return 'J';
+	case ArrayElementKind::Float:
+		return 'F';
+	case ArrayElementKind::Double:
+		return 'D';
+	case ArrayElementKind::Object:
+		break;
+	}
+	return '\0';
+}
+
 } // namespace
+
+uint64_t arrayElementSize(ArrayElementKind kind)
+{
+	switch (kind)
+	{
+	case ArrayElementKind::Boolean:
+	case ArrayElementKind::Byte:
+		return 1;
+	case ArrayElementKind::Char:
+	case ArrayElementKind::Short:
+		return 2;
+	case ArrayElementKind::Int:
+	case ArrayElementKind::Float:
+		return 4;
+	case ArrayElementKind::Long:
+	case ArrayElementKind::Double:
+	case ArrayElementKind::Object:
+		return 8;
+	}
+	return 0;
+}
 
 JniArena::JniArena(RuntimeMemory &memory)
 	: memory_(memory)
@@ -364,8 +413,20 @@ Result<uint64_t> JavaWorld::declareField(uint64_t class_object,
 		return Error{ ErrorCode::NotFound, "field declared on an unknown class" };
 	}
 	bool valid = false;
-	const ValueKind kind = signature.empty() ? ValueKind::Void : valueKindOf(signature.front(), &valid);
-	if (signature.size() != 1 || !valid || kind == ValueKind::Void)
+	ValueKind kind = ValueKind::Void;
+	if (!signature.empty() && (signature.front() == 'L' || signature.front() == '['))
+	{
+		// Object and array fields carry their full descriptor
+		// (Ljava/lang/String;, [Ljava/lang/Object;).
+		valid = signature.front() == 'L' ? (signature.size() >= 3 && signature.back() == ';') :
+						   (signature.size() >= 2);
+		kind = ValueKind::Object;
+	}
+	else if (signature.size() == 1)
+	{
+		kind = valueKindOf(signature.front(), &valid);
+	}
+	if (!valid || kind == ValueKind::Void)
 	{
 		return Error{ ErrorCode::InvalidArgument,
 			"unsupported field signature " + std::string(signature) };
@@ -585,6 +646,144 @@ Result<void> JavaWorld::writeStaticField(uint64_t, uint64_t field_id, uint64_t v
 		return Error{ ErrorCode::Internal, "static field owner disappeared" };
 	}
 	owner->static_values[field_id] = value;
+	return {};
+}
+
+Result<uint64_t> JavaWorld::newArray(ArrayElementKind kind,
+	uint64_t length,
+	uint64_t element_class,
+	uint64_t initial_element)
+{
+	if (length > kMaxArrayLength)
+	{
+		return Error{ ErrorCode::InvalidArgument, "array is too large" };
+	}
+
+	std::string descriptor = "[";
+	if (kind == ArrayElementKind::Object)
+	{
+		if (element_class == 0)
+		{
+			element_class = object_class_;
+		}
+		if (classRecord(element_class) == nullptr)
+		{
+			return Error{ ErrorCode::NotFound, "array element class is not declared" };
+		}
+		descriptor += std::string(descriptorOfClass(element_class));
+	}
+	else
+	{
+		descriptor.push_back(arrayPrimitiveTag(kind));
+	}
+	auto declared = declareClass(descriptor, "java/lang/Object");
+	if (!declared.ok())
+	{
+		return declared.error();
+	}
+
+	const uint64_t element_size = arrayElementSize(kind);
+	const uint64_t bytes = length * element_size;
+	auto storage = arena_.allocate(bytes == 0 ? 8 : bytes, 8);
+	if (!storage.ok())
+	{
+		return storage.error();
+	}
+	std::vector<uint8_t> zeros(bytes == 0 ? 8 : static_cast<size_t>(bytes), 0);
+	auto cleared = memory_.write(GuestVA{ storage.value() }, zeros.data(), zeros.size());
+	if (!cleared.ok())
+	{
+		return cleared.error();
+	}
+	if (kind == ArrayElementKind::Object && initial_element != 0 && length != 0)
+	{
+		std::vector<uint64_t> elements(static_cast<size_t>(length), initial_element);
+		auto written = memory_.write(GuestVA{ storage.value() }, elements.data(),
+			elements.size() * sizeof(uint64_t));
+		if (!written.ok())
+		{
+			return written.error();
+		}
+	}
+
+	auto object = allocateObject(declared.value());
+	if (!object.ok())
+	{
+		return object.error();
+	}
+	ObjectRecord &record = objects_[object.value()];
+	record.is_array = true;
+	record.array_kind = kind;
+	record.array_length = length;
+	record.array_storage = storage.value();
+	record.array_element_class = kind == ArrayElementKind::Object ? element_class : 0;
+	return object.value();
+}
+
+Result<ArrayView> JavaWorld::arrayView(uint64_t object) const
+{
+	const ObjectRecord *record = objectRecord(object);
+	if (record == nullptr || !record->is_array)
+	{
+		return Error{ ErrorCode::InvalidArgument, "object is not an array" };
+	}
+	ArrayView view;
+	view.kind = record->array_kind;
+	view.length = record->array_length;
+	view.storage = record->array_storage;
+	view.element_class = record->array_element_class;
+	return view;
+}
+
+Result<uint64_t> JavaWorld::readArrayElement(uint64_t object, uint64_t index) const
+{
+	auto view = arrayView(object);
+	if (!view.ok())
+	{
+		return view.error();
+	}
+	if (view.value().kind != ArrayElementKind::Object)
+	{
+		return Error{ ErrorCode::InvalidArgument, "object is not an object array" };
+	}
+	if (index >= view.value().length)
+	{
+		return Error{ ErrorCode::InvalidArgument, "array index is out of bounds" };
+	}
+	uint64_t value = 0;
+	auto read = memory_.read(GuestVA{ view.value().storage + index * 8 }, &value, sizeof(value));
+	if (!read.ok())
+	{
+		return read.error();
+	}
+	return value;
+}
+
+Result<void> JavaWorld::writeArrayElement(uint64_t object, uint64_t index, uint64_t value)
+{
+	auto view = arrayView(object);
+	if (!view.ok())
+	{
+		return view.error();
+	}
+	if (view.value().kind != ArrayElementKind::Object)
+	{
+		return Error{ ErrorCode::InvalidArgument, "object is not an object array" };
+	}
+	if (index >= view.value().length)
+	{
+		return Error{ ErrorCode::InvalidArgument, "array index is out of bounds" };
+	}
+	return memory_.write(GuestVA{ view.value().storage + index * 8 }, &value, sizeof(value));
+}
+
+Result<void> JavaWorld::setStringContent(uint64_t object, std::string_view utf8)
+{
+	if (object == 0 || classOf(object) != string_class_)
+	{
+		return Error{ ErrorCode::InvalidArgument, "object is not a java/lang/String" };
+	}
+	strings_[object] = utf8ToUtf16(utf8);
 	return {};
 }
 

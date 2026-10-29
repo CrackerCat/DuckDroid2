@@ -28,13 +28,13 @@ void Usage()
 	std::fprintf(stderr,
 		"usage: duckemu_worker --instance --ipc-fd FD --instance-id ID\n"
 		"                      --app ID --library PATH --rom-libc PATH\n"
-		"                      [--library-path DIR]... [--trace DIR]\n"
-		"                      [--wall-time-ns N] [--monotonic-time-ns N]\n"
+		"                      [--library-path DIR]... [--filesystem-root DIR]...\n"
+		"                      [--trace DIR] [--wall-time-ns N] [--monotonic-time-ns N]\n"
 		"   or: duckemu_worker --supervisor --ipc-fd FD\n"
 		"                      --app ID --library PATH --rom-libc PATH\n"
 		"                      [--instances N] [--instance-exec PATH]\n"
-		"                      [--library-path DIR]... [--trace DIR]\n"
-		"                      [--worker-id ID] [--init-timeout-us N]\n"
+		"                      [--library-path DIR]... [--filesystem-root DIR]...\n"
+		"                      [--trace DIR] [--worker-id ID] [--init-timeout-us N]\n"
 		"                      [--invoke-timeout-us N] [--backoff-ms N]\n"
 		"                      [--max-requests-per-instance N]\n"
 		"                      [--wall-time-ns N] [--monotonic-time-ns N]\n");
@@ -77,6 +77,7 @@ struct Arguments
 	std::string library;
 	std::string rom_libc;
 	std::vector<std::string> library_paths;
+	std::vector<std::string> filesystem_roots;
 	std::string trace;
 	std::string instance_exec;
 	uint32_t instances = 1;
@@ -166,6 +167,14 @@ bool ParseArguments(int argc, char **argv, Arguments *arguments)
 				return false;
 			}
 			arguments->library_paths.push_back(value);
+		}
+		else if (argument == "--filesystem-root")
+		{
+			if (!TakeValue(argc, argv, &index, "--filesystem-root", &value))
+			{
+				return false;
+			}
+			arguments->filesystem_roots.push_back(value);
 		}
 		else if (argument == "--trace")
 		{
@@ -280,6 +289,7 @@ int RunInstance(const Arguments &arguments)
 	config.app.library = arguments.library;
 	config.app.rom_libc = arguments.rom_libc;
 	config.app.library_search_paths = arguments.library_paths;
+	config.app.filesystem_roots = arguments.filesystem_roots;
 	config.trace_path = arguments.trace;
 	config.has_wall_time = arguments.has_wall_time;
 	config.wall_time_ns = arguments.wall_time_ns;
@@ -300,6 +310,7 @@ int RunSupervisor(const Arguments &arguments)
 	config.app.library = arguments.library;
 	config.app.rom_libc = arguments.rom_libc;
 	config.app.library_search_paths = arguments.library_paths;
+	config.app.filesystem_roots = arguments.filesystem_roots;
 	config.instance_executable = arguments.instance_exec;
 	config.instances = arguments.instances;
 	config.init_timeout_us = arguments.init_timeout_us;

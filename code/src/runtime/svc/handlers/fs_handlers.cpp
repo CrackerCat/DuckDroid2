@@ -317,6 +317,14 @@ int64_t sysNewfstatat(SyscallContext &ctx)
 	return writeStat(ctx, stat_address, stat);
 }
 
+// The guest file system is read-only: every host root is exposed RO and /proc
+// is virtual. A real kernel answers EROFS for mkdirat on such a mount, so the
+// guest gets that instead of an unimplemented-syscall warning.
+int64_t sysMkdirat(SyscallContext &)
+{
+	return kError(kErofs);
+}
+
 int64_t sysFstat(SyscallContext &ctx)
 {
 	const uint64_t fd = ctx.args[0];
@@ -358,6 +366,8 @@ std::optional<int64_t> handleFsSyscall(SyscallContext &ctx, uint32_t number)
 		return sysNewfstatat(ctx);
 	case kSysFstat:
 		return sysFstat(ctx);
+	case kSysMkdirat:
+		return sysMkdirat(ctx);
 	default:
 		return std::nullopt;
 	}

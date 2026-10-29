@@ -182,6 +182,11 @@ bool WorkerPool::Impl::Spawn(Slot &slot, std::string *error)
 		arguments.push_back("--library-path");
 		arguments.push_back(path);
 	}
+	for (const std::string &root : spec.filesystem_roots)
+	{
+		arguments.push_back("--filesystem-root");
+		arguments.push_back(root);
+	}
 	arguments.push_back("--instances");
 	arguments.push_back(std::to_string(spec.instances));
 	arguments.push_back("--init-timeout-us");
