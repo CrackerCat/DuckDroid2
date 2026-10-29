@@ -473,3 +473,26 @@ add_dependencies(07d_session_reset duckemu_worker)
 add_test(NAME 07d_session_reset COMMAND 07d_session_reset)
 set_tests_properties(07d_session_reset PROPERTIES TIMEOUT 180)
 duckemu_set_warnings(07d_session_reset)
+
+# M7 gate: Web API -> System -> Worker -> Runtime, plus a cross-check against
+# the DuckDroid reference runner when it is present.
+set(DUCKEMU_DUCK_DROID_ELEVEN_CASE
+    "${DUCKEMU_ANDROID_ENV_ROOT}/DuckDroid/build/code/user_code/libeleven_case/libeleven_case"
+    CACHE FILEPATH "DuckDroid reference runner for libeleven (empty skips parity)")
+add_executable(07_end_to_end integration/07_end_to_end.cpp)
+target_link_libraries(07_end_to_end PRIVATE
+  duckemu_system_core
+  duckemu_test_support)
+target_compile_definitions(07_end_to_end PRIVATE
+  DUCKEMU_ROM_BOOTSTRAP="${DUCKEMU_ROM_BOOTSTRAP}"
+  DUCKEMU_ROM_LIB64="${DUCKEMU_ROM_LIB64}"
+  DUCKEMU_LIBELEVEN_SO="${DUCKEMU_LIBELEVEN_CASE_SO}"
+  DUCKEMU_WORKER_EXEC="$<TARGET_FILE:duckemu_worker>")
+if(EXISTS "${DUCKEMU_DUCK_DROID_ELEVEN_CASE}")
+  target_compile_definitions(07_end_to_end PRIVATE
+    DUCKEMU_DUCK_DROID_ELEVEN_CASE="${DUCKEMU_DUCK_DROID_ELEVEN_CASE}")
+endif()
+add_dependencies(07_end_to_end duckemu_worker)
+add_test(NAME 07_end_to_end COMMAND 07_end_to_end)
+set_tests_properties(07_end_to_end PROPERTIES TIMEOUT 300)
+duckemu_set_warnings(07_end_to_end)
