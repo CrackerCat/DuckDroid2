@@ -7,9 +7,11 @@ instances are still initializing.
 
     python3 sign_client.py /tmp/duckemu/libeleven.sock 7
     python3 sign_client.py --raw /tmp/duckemu/libeleven.sock 7
+    python3 sign_client.py --json /tmp/duckemu/libeleven.sock 7
 
-By default the response's `value` is decoded with libeleven's code table
-(data(n) = custom_b64(f"{n}:{now_ms}")); pass --raw to print it untouched.
+`signature=` is the guest's raw return value (the actual signing result). For
+libeleven it is custom_b64(f"{n}:{now_ms}"), so a `decoded=` field is appended
+when it decodes; --raw suppresses that, --json dumps the whole response frame.
 """
 
 import json
@@ -22,18 +24,22 @@ LIBELEVEN_ALPHABET = "45AogfZw/9+FcYrSVH1TKM7k3BebEtqCIGPJyQD60lUXpNmhWuRLds8jai
 
 
 def decode_libeleven(text):
+    """libeleven's data(n) = custom_b64(f"{n}:{now_ms}"). None if not that."""
     bits = 0
     count = 0
     out = bytearray()
-    for ch in text:
-        if ch == "=":
-            break
-        bits = (bits << 6) | LIBELEVEN_ALPHABET.index(ch)
-        count += 6
-        if count >= 8:
-            count -= 8
-            out.append((bits >> count) & 0xFF)
-    return out.decode()
+    try:
+        for ch in text:
+            if ch == "=":
+                break
+            bits = (bits << 6) | LIBELEVEN_ALPHABET.index(ch)
+            count += 6
+            if count >= 8:
+                count -= 8
+                out.append((bits >> count) & 0xFF)
+        return out.decode()
+    except (ValueError, UnicodeDecodeError):
+        return None
 
 
 def exchange(path, request):
@@ -58,7 +64,7 @@ def exchange(path, request):
         sock.close()
 
 
-def sign(path, value, session, raw):
+def sign(path, value, session, raw, json_output):
     for attempt in range(600):
         request = {
             "version": 1,
@@ -71,10 +77,15 @@ def sign(path, value, session, raw):
             request["session"] = {"id": session}
         response = exchange(path, request)
         if response.get("ok"):
-            encoded = response["result"]["value"]
-            shown = encoded if raw else decode_libeleven(encoded)
-            print("instance=%s  %s  meta=%s" % (
-                response["instance"], shown, json.dumps(response["meta"])))
+            if json_output:
+                print(json.dumps(response, indent=2, ensure_ascii=False))
+            else:
+                signature = response["result"].get("value", "")
+                line = "instance=%s  signature=%s" % (response["instance"], signature)
+                decoded = None if raw else decode_libeleven(signature)
+                if decoded is not None:
+                    line += "  decoded=%s" % decoded
+                print(line + "  meta=" + json.dumps(response["meta"]))
             return response
         if response.get("error", {}).get("code") == "OVERLOADED":
             time.sleep(0.1)
@@ -87,8 +98,12 @@ def sign(path, value, session, raw):
 def main():
     args = sys.argv[1:]
     raw = False
-    if args and args[0] == "--raw":
-        raw = True
+    json_output = False
+    while args and args[0] in ("--raw", "--json"):
+        if args[0] == "--raw":
+            raw = True
+        else:
+            json_output = True
         args = args[1:]
     if len(args) < 1:
         print(__doc__)
@@ -97,9 +112,9 @@ def main():
     value = args[1] if len(args) > 1 else "7"
 
     # First request opens a session, the second pins to the same instance.
-    first = sign(path, value, None, raw)
+    first = sign(path, value, None, raw, json_output)
     if first is not None:
-        sign(path, value, first["instance"], raw)
+        sign(path, value, first["instance"], raw, json_output)
     return 0
 
 
