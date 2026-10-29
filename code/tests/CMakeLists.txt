@@ -405,3 +405,24 @@ add_executable(svc_trace_format_test unit/observer/svc_trace_format_test.cpp)
 target_link_libraries(svc_trace_format_test PRIVATE duckemu_runtime duckemu_test_support)
 add_test(NAME svc_trace_format_test COMMAND svc_trace_format_test)
 duckemu_set_warnings(svc_trace_format_test)
+
+# M7 S1: wire framing and JSON message validation.
+add_executable(protocol_test unit/protocol/protocol_test.cpp)
+target_link_libraries(protocol_test PRIVATE duckemu_protocol duckemu_test_support)
+add_test(NAME protocol_test COMMAND protocol_test)
+duckemu_set_warnings(protocol_test)
+
+# M7 S2: one instance process driven over its control channel. The child runs
+# the same run_instance_host() the supervisor will exec.
+add_executable(07a_instance_host integration/07a_instance_host.cpp)
+target_link_libraries(07a_instance_host PRIVATE
+  duckemu_worker_core
+  duckemu_user_registry
+  duckemu_test_support)
+target_compile_definitions(07a_instance_host PRIVATE
+  DUCKEMU_ROM_BOOTSTRAP="${DUCKEMU_ROM_BOOTSTRAP}"
+  DUCKEMU_ROM_LIB64="${DUCKEMU_ROM_LIB64}"
+  DUCKEMU_LIBELEVEN_SO="${DUCKEMU_LIBELEVEN_CASE_SO}")
+add_test(NAME 07a_instance_host COMMAND 07a_instance_host)
+set_tests_properties(07a_instance_host PROPERTIES TIMEOUT 120)
+duckemu_set_warnings(07a_instance_host)

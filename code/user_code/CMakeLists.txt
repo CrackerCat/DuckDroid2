@@ -18,6 +18,19 @@ target_include_directories(duckemu_user_libeleven PUBLIC "${CMAKE_CURRENT_SOURCE
 target_link_libraries(duckemu_user_libeleven PRIVATE duckemu_runtime)
 duckemu_set_warnings(duckemu_user_libeleven)
 
+# M7: every project also implements the worker's AppPlugin seam. The registry
+# is the only place app ids are named on this side of the boundary.
+add_library(duckemu_user_registry STATIC
+  registry.cpp
+  libeleven_case/plugin.cpp
+)
+target_include_directories(duckemu_user_registry PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(duckemu_user_registry PUBLIC
+  duckemu_user_libeleven
+  duckemu_common
+)
+duckemu_set_warnings(duckemu_user_registry)
+
 # The project runner: loads ROM libc + assets/libeleven.so and calls the
 # dynamically registered data(int). The .so is part of the project, not a
 # test fixture.

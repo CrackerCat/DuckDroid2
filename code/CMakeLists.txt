@@ -59,8 +59,18 @@ endif()
 # ---------------------------------------------------------------------------
 find_package(Threads REQUIRED)
 
+# JSON is the M7 wire format. A system package (same as DuckDroid) keeps the
+# tree free of a vendored single-header dependency.
+find_package(nlohmann_json 3.11 QUIET)
+if(NOT nlohmann_json_FOUND)
+  message(FATAL_ERROR
+    "M7 requires nlohmann_json >= 3.11 (install nlohmann-json or vendor it "
+    "under code/third_party)")
+endif()
+
 add_library(duckemu_common STATIC
   src/common/log/logger.cpp
+  src/common/uds/socket.cpp
 )
 target_include_directories(duckemu_common PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 duckemu_set_warnings(duckemu_common)
@@ -112,9 +122,42 @@ target_link_libraries(duckemu_runtime PUBLIC
 )
 duckemu_set_warnings(duckemu_runtime)
 
+# M7 wire protocol: framing + JSON messages. Shared by System, Worker and the
+# instance processes; deliberately has no dependency on the runtime.
+add_library(duckemu_protocol STATIC
+  src/protocol/frame.cpp
+  src/protocol/messages.cpp
+  src/protocol/instance_messages.cpp
+)
+target_include_directories(duckemu_protocol PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(duckemu_protocol PUBLIC
+  duckemu_common
+  nlohmann_json::nlohmann_json
+)
+duckemu_set_warnings(duckemu_protocol)
+
 # Target projects. They link the runtime and register their Java environment
 # modules at static-init time; the runtime never names a target.
 add_subdirectory(user_code)
+
+# M7 instance host: the `--instance` side of the worker. It owns the only
+# RuntimeInstance in its process; the supervisor never links this path into a
+# process that forks.
+add_library(duckemu_worker_core STATIC
+  src/worker/instance_host.cpp
+)
+target_link_libraries(duckemu_worker_core PUBLIC
+  duckemu_protocol
+  duckemu_runtime
+)
+duckemu_set_warnings(duckemu_worker_core)
+
+add_executable(duckemu_worker src/worker/main.cpp)
+target_link_libraries(duckemu_worker PRIVATE
+  duckemu_worker_core
+  duckemu_user_registry
+)
+duckemu_set_warnings(duckemu_worker)
 
 # M0 spike: deliberately flat, no runtime abstractions.
 add_executable(unicorn_spike tools/spike/unicorn_spike.cpp)
