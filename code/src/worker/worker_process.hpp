@@ -23,6 +23,9 @@ struct WorkerConfig
 	uint64_t invoke_timeout_us = 5ull * 1000 * 1000;
 	uint32_t max_consecutive_failures = 5;
 	uint64_t respawn_backoff_ms = 100;
+	// 0 = never recycle. Otherwise the instance is replaced after this many
+	// requests; its session id dies with it (M6 warm-pool reset semantics).
+	uint32_t max_requests_per_instance = 0;
 
 	std::string trace_path;
 	bool has_wall_time = false;

@@ -161,6 +161,19 @@ target_link_libraries(duckemu_worker PRIVATE
 )
 duckemu_set_warnings(duckemu_worker)
 
+# M7 System: UDS gateway + worker pool. Deliberately no runtime dependency —
+# the gateway never touches guest state.
+add_library(duckemu_system_core STATIC
+  src/system/system.cpp
+  src/system/worker_pool.cpp
+)
+target_link_libraries(duckemu_system_core PUBLIC duckemu_protocol)
+duckemu_set_warnings(duckemu_system_core)
+
+add_executable(duckemu_system src/system/main.cpp)
+target_link_libraries(duckemu_system PRIVATE duckemu_system_core)
+duckemu_set_warnings(duckemu_system)
+
 # M0 spike: deliberately flat, no runtime abstractions.
 add_executable(unicorn_spike tools/spike/unicorn_spike.cpp)
 target_link_libraries(unicorn_spike PRIVATE

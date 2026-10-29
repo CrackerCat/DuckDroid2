@@ -13,6 +13,7 @@
 #include <string_view>
 #include <sys/wait.h>
 #include <thread>
+#include <unordered_map>
 #include <unistd.h>
 
 #include "common/log/logger.hpp"
@@ -129,6 +130,15 @@ struct WorkerProcess::Impl
 	{
 		uint32_t conn_id = 0;
 		protocol::Request request;
+		std::chrono::steady_clock::time_point queued_at;
+	};
+
+	// A client-visible session id is the instance id it was assigned to. The
+	// binding dies with the instance (crash, recycle or shutdown).
+	struct SessionBinding
+	{
+		size_t slot = 0;
+		std::string instance_id;
 	};
 
 	struct Slot
@@ -156,6 +166,11 @@ struct WorkerProcess::Impl
 	std::atomic<uint64_t> sequence{ 0 };
 	std::atomic<bool> stopping{ false };
 	std::vector<std::unique_ptr<Slot> > slots;
+	std::mutex session_mutex;
+	std::unordered_map<std::string, SessionBinding> sessions;
+
+	void ForgetSession(const std::string &instance_id);
+	void ForgetSlotSessions(size_t slot_index);
 
 	bool Start(std::string *error);
 	void StopAndJoin();
@@ -271,6 +286,7 @@ void WorkerProcess::Impl::SlotLoop(Slot &slot)
 			slot.ready = false;
 			slot.busy = false;
 		}
+		ForgetSlotSessions(slot.index);
 		// The channel may already be gone; the write is best effort.
 		protocol::instance::Message shutdown;
 		shutdown.type = protocol::instance::Type::kShutdown;
@@ -432,6 +448,24 @@ void WorkerProcess::Impl::Serve(Slot &slot, uint32_t *failures)
 			slot.busy = true;
 		}
 
+		// A request that spent too long queued must not run at all: the client
+		// has already given up on it.
+		if (job.request.has_deadline && job.request.deadline_ms != 0)
+		{
+			const auto waited_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+				std::chrono::steady_clock::now() - job.queued_at).count();
+			if (waited_ms > static_cast<long long>(job.request.deadline_ms))
+			{
+				{
+					std::lock_guard<std::mutex> lock(slot.mutex);
+					slot.busy = false;
+				}
+				RespondError(job.conn_id, job.request.id, protocol::error_code::kDeadlineExceeded,
+					"deadline expired in the queue", protocol::stage::kQueue, true);
+				continue;
+			}
+		}
+
 		const uint64_t timeout_us = job.request.has_deadline && job.request.deadline_ms != 0
 			? job.request.deadline_ms * 1000
 			: config.invoke_timeout_us;
@@ -486,12 +520,22 @@ void WorkerProcess::Impl::Serve(Slot &slot, uint32_t *failures)
 		response.meta.init_us = slot.init_us;
 		response.meta.invoke_us = result.invoke_us;
 		response.meta.instance_requests = result.requests;
+		const bool recycle = config.max_requests_per_instance != 0 &&
+			result.requests >= config.max_requests_per_instance;
+		response.meta.recycled = recycle;
 		WriteResponse(job.conn_id, response);
 		served.fetch_add(1);
 		*failures = 0;
 		{
 			std::lock_guard<std::mutex> lock(slot.mutex);
 			slot.busy = false;
+		}
+		if (recycle)
+		{
+			// The instance retires after this response; its session id becomes
+			// invalid and the slot thread replaces the process.
+			ForgetSession(slot.instance_id);
+			return;
 		}
 	}
 }
@@ -527,6 +571,61 @@ bool WorkerProcess::Impl::PickSlot(Slot **result)
 
 void WorkerProcess::Impl::Dispatch(uint32_t conn_id, protocol::Request request)
 {
+	const auto now = std::chrono::steady_clock::now();
+
+	if (request.session.present)
+	{
+		SessionBinding binding;
+		bool found = false;
+		{
+			std::lock_guard<std::mutex> lock(session_mutex);
+			const auto it = sessions.find(request.session.id);
+			if (it != sessions.end())
+			{
+				binding = it->second;
+				found = true;
+			}
+		}
+		if (!found || binding.slot >= slots.size())
+		{
+			if (found)
+			{
+				ForgetSession(request.session.id);
+			}
+			RespondError(conn_id, request.id, protocol::error_code::kSessionNotFound,
+				"unknown session", protocol::stage::kQueue, false, true);
+			return;
+		}
+
+		Slot *slot = slots[binding.slot].get();
+		bool alive = false;
+		bool congested = false;
+		{
+			std::lock_guard<std::mutex> lock(slot->mutex);
+			alive = slot->ready && !slot->stop && slot->instance_id == binding.instance_id;
+			congested = slot->queue.size() >= kMaxQueuePerSlot;
+			if (alive && !congested)
+			{
+				slot->queue.push_back(Job{ conn_id, std::move(request), now });
+			}
+		}
+		if (!alive)
+		{
+			ForgetSession(binding.instance_id);
+			RespondError(conn_id, request.id, protocol::error_code::kSessionGone,
+				"the session's instance is gone", protocol::stage::kQueue, true, true);
+			return;
+		}
+		if (congested)
+		{
+			RespondError(conn_id, request.id, protocol::error_code::kOverloaded,
+				"the session's instance queue is full", protocol::stage::kQueue, true);
+			return;
+		}
+		slot->cv.notify_one();
+		return;
+	}
+
 	Slot *slot = nullptr;
 	if (!PickSlot(&slot))
 	{
@@ -536,9 +635,33 @@ void WorkerProcess::Impl::Dispatch(uint32_t conn_id, protocol::Request request)
 	}
 	{
 		std::lock_guard<std::mutex> lock(slot->mutex);
-		slot->queue.push_back(Job{ conn_id, std::move(request) });
+		// The instance id is the session id the client will echo back.
+		sessions[slot->instance_id] = SessionBinding{ slot->index, slot->instance_id };
+		slot->queue.push_back(Job{ conn_id, std::move(request), now });
 	}
 	slot->cv.notify_one();
+}
+
+void WorkerProcess::Impl::ForgetSession(const std::string &instance_id)
+{
+	std::lock_guard<std::mutex> lock(session_mutex);
+	sessions.erase(instance_id);
+}
+
+void WorkerProcess::Impl::ForgetSlotSessions(size_t slot_index)
+{
+	std::lock_guard<std::mutex> lock(session_mutex);
+	for (auto it = sessions.begin(); it != sessions.end();)
+	{
+		if (it->second.slot == slot_index)
+		{
+			it = sessions.erase(it);
+		}
+		else
+		{
+			++it;
+		}
+	}
 }
 
 bool WorkerProcess::Impl::ChannelDead(Slot &slot)

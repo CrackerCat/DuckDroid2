@@ -36,6 +36,7 @@ void Usage()
 		"                      [--library-path DIR]... [--trace DIR]\n"
 		"                      [--worker-id ID] [--init-timeout-us N]\n"
 		"                      [--invoke-timeout-us N] [--backoff-ms N]\n"
+		"                      [--max-requests-per-instance N]\n"
 		"                      [--wall-time-ns N] [--monotonic-time-ns N]\n");
 }
 
@@ -82,6 +83,7 @@ struct Arguments
 	uint64_t init_timeout_us = 120ull * 1000 * 1000;
 	uint64_t invoke_timeout_us = 5ull * 1000 * 1000;
 	uint64_t backoff_ms = 100;
+	uint32_t max_requests_per_instance = 0;
 	bool has_wall_time = false;
 	uint64_t wall_time_ns = 0;
 	bool has_monotonic_time = false;
@@ -209,6 +211,16 @@ bool ParseArguments(int argc, char **argv, Arguments *arguments)
 				return false;
 			}
 		}
+		else if (argument == "--max-requests-per-instance")
+		{
+			if (!TakeValue(argc, argv, &index, "--max-requests-per-instance", &value) ||
+				!ParseU64(value, &number) || number > 0xFFFFFFFFULL)
+			{
+				std::fprintf(stderr, "worker: --max-requests-per-instance needs a number\n");
+				return false;
+			}
+			arguments->max_requests_per_instance = static_cast<uint32_t>(number);
+		}
 		else if (argument == "--wall-time-ns")
 		{
 			if (!TakeValue(argc, argv, &index, "--wall-time-ns", &value) ||
@@ -293,6 +305,7 @@ int RunSupervisor(const Arguments &arguments)
 	config.init_timeout_us = arguments.init_timeout_us;
 	config.invoke_timeout_us = arguments.invoke_timeout_us;
 	config.respawn_backoff_ms = arguments.backoff_ms;
+	config.max_requests_per_instance = arguments.max_requests_per_instance;
 	config.trace_path = arguments.trace;
 	config.has_wall_time = arguments.has_wall_time;
 	config.wall_time_ns = arguments.wall_time_ns;

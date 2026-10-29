@@ -442,3 +442,34 @@ add_dependencies(07b_worker_supervisor duckemu_worker)
 add_test(NAME 07b_worker_supervisor COMMAND 07b_worker_supervisor)
 set_tests_properties(07b_worker_supervisor PROPERTIES TIMEOUT 180)
 duckemu_set_warnings(07b_worker_supervisor)
+
+# M7 S4: the gateway in process. The client speaks the same framed JSON a
+# Python Web API would; System spawns worker and instance processes for real.
+add_executable(07c_system_gateway integration/07c_system_gateway.cpp)
+target_link_libraries(07c_system_gateway PRIVATE
+  duckemu_system_core
+  duckemu_test_support)
+target_compile_definitions(07c_system_gateway PRIVATE
+  DUCKEMU_ROM_BOOTSTRAP="${DUCKEMU_ROM_BOOTSTRAP}"
+  DUCKEMU_ROM_LIB64="${DUCKEMU_ROM_LIB64}"
+  DUCKEMU_LIBELEVEN_SO="${DUCKEMU_LIBELEVEN_CASE_SO}"
+  DUCKEMU_WORKER_EXEC="$<TARGET_FILE:duckemu_worker>")
+add_dependencies(07c_system_gateway duckemu_worker)
+add_test(NAME 07c_system_gateway COMMAND 07c_system_gateway)
+set_tests_properties(07c_system_gateway PROPERTIES TIMEOUT 240)
+duckemu_set_warnings(07c_system_gateway)
+
+# M7 S5: session affinity and recycling (M6 warm-pool reset semantics).
+add_executable(07d_session_reset integration/07d_session_reset.cpp)
+target_link_libraries(07d_session_reset PRIVATE
+  duckemu_worker_core
+  duckemu_test_support)
+target_compile_definitions(07d_session_reset PRIVATE
+  DUCKEMU_ROM_BOOTSTRAP="${DUCKEMU_ROM_BOOTSTRAP}"
+  DUCKEMU_ROM_LIB64="${DUCKEMU_ROM_LIB64}"
+  DUCKEMU_LIBELEVEN_SO="${DUCKEMU_LIBELEVEN_CASE_SO}"
+  DUCKEMU_WORKER_EXEC="$<TARGET_FILE:duckemu_worker>")
+add_dependencies(07d_session_reset duckemu_worker)
+add_test(NAME 07d_session_reset COMMAND 07d_session_reset)
+set_tests_properties(07d_session_reset PROPERTIES TIMEOUT 180)
+duckemu_set_warnings(07d_session_reset)
