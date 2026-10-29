@@ -165,6 +165,7 @@ struct WorkerProcess::Impl
 	std::atomic<uint64_t> served{ 0 };
 	std::atomic<uint64_t> sequence{ 0 };
 	std::atomic<bool> stopping{ false };
+	std::atomic<size_t> next_slot{ 0 };
 	std::vector<std::unique_ptr<Slot> > slots;
 	std::mutex session_mutex;
 	std::unordered_map<std::string, SessionBinding> sessions;
@@ -542,10 +543,21 @@ void WorkerProcess::Impl::Serve(Slot &slot, uint32_t *failures)
 
 bool WorkerProcess::Impl::PickSlot(Slot **result)
 {
+	const size_t count = slots.size();
+	if (count == 0)
+	{
+		*result = nullptr;
+		return false;
+	}
+	// Scan from a rotating start so equally-loaded slots are chosen round-robin.
+	// Without this, every new session would pin to slot 0 (it is idle between
+	// requests), and one instance would serve the whole worker.
+	const size_t start = next_slot.fetch_add(1) % count;
 	Slot *best = nullptr;
 	size_t best_load = 0;
-	for (auto &slot : slots)
+	for (size_t offset = 0; offset < count; ++offset)
 	{
+		Slot *slot = slots[(start + offset) % count].get();
 		std::lock_guard<std::mutex> lock(slot->mutex);
 		if (!slot->ready || slot->stop)
 		{
@@ -556,12 +568,11 @@ bool WorkerProcess::Impl::PickSlot(Slot **result)
 			continue;
 		}
 		// An idle slot is always preferable; a busy one only receives work
-		// once every slot is busy. This is what spreads concurrent requests
-		// across instance processes instead of stacking them on slot 0.
+		// once every slot is busy.
 		const size_t load = (slot->busy || !slot->queue.empty()) ? slot->queue.size() + 1 : 0;
 		if (best == nullptr || load < best_load)
 		{
-			best = slot.get();
+			best = slot;
 			best_load = load;
 		}
 	}
