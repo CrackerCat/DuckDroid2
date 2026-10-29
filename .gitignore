@@ -4,6 +4,9 @@ build-*/
 compile_commands.json
 .cache/
 
+# APK 一律不入库（包括目标项目的精简 APK）
+*.apk
+
 # 产物
 *.o
 *.a

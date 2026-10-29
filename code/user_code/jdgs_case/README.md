@@ -105,6 +105,9 @@ META-INF/JINGDONG.RSA
 相同；runner 通过 `filesystem_roots` 把它挂在
 `/data/app/com.jingdong.app.mall-NMPcDqBzdYwQrAm-23cOyQ==/base.apk`。
 
+APK 文件不入库（`.gitignore` 排除 `*.apk`）；新克隆的仓库里没有这个文件，
+本地运行前需要把精简 APK 放到上面的路径。
+
 ## worker / AppPlugin
 
 app id 是 `jdgs16`。除了库路径和 ROM libc，还要把项目 `assets/root` 作为
