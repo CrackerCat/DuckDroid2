@@ -3,6 +3,7 @@
 
 #include <cstdint>
 
+#include "runtime/clock/runtime_clock.hpp"
 #include "runtime/jni/envs/envs.hpp"
 #include "runtime/jni/jni_types.hpp"
 #include "runtime/jni/world/java_world.hpp"
@@ -26,7 +27,8 @@ uint64_t addShim(JavaWorld &, InvokeContext &call)
 int main()
 {
 	RuntimeMemory memory;
-	JavaWorld world(memory);
+	RuntimeClock clock;
+	JavaWorld world(memory, clock);
 	CHECK_RESULT(world.initialize());
 
 	auto java_lang = envs::installJavaLang(world);
@@ -38,6 +40,46 @@ int main()
 	CHECK(world.findClass("java/lang/Class") != 0);
 	CHECK_EQ(world.findClass("does/not/Exist"), 0);
 	CHECK_EQ(world.findClass("does/not/Exist"), 0);
+
+	// java.lang.System uses the instance clock: injected time advances 1 ms
+	// per read, so a replay is deterministic.
+	const uint64_t system_class = world.findClass("java/lang/System");
+	CHECK(system_class != 0);
+	const uint64_t millis_id = world.findMethod(system_class, "currentTimeMillis", "()J", true);
+	const uint64_t nanotime_id = world.findMethod(system_class, "nanoTime", "()J", true);
+	CHECK(millis_id != 0);
+	CHECK(nanotime_id != 0);
+	const MethodRecord *millis = world.method(millis_id);
+	const MethodRecord *nanotime = world.method(nanotime_id);
+	CHECK(millis != nullptr && millis->shim);
+	CHECK(nanotime != nullptr && nanotime->shim);
+	if (millis != nullptr && millis->shim && nanotime != nullptr && nanotime->shim)
+	{
+		InvokeContext time_call;
+		time_call.receiver = system_class;
+
+		clock.setWallTimeNs(1792886400000000000ULL);
+		auto first = millis->shim(world, time_call);
+		auto second = millis->shim(world, time_call);
+		CHECK_RESULT(first);
+		CHECK_RESULT(second);
+		if (first.ok() && second.ok())
+		{
+			CHECK_EQ(first.value(), 1792886400000ULL);
+			CHECK_EQ(second.value(), 1792886400001ULL);
+		}
+
+		clock.setMonotonicTimeNs(5000000ULL);
+		auto nano_first = nanotime->shim(world, time_call);
+		auto nano_second = nanotime->shim(world, time_call);
+		CHECK_RESULT(nano_first);
+		CHECK_RESULT(nano_second);
+		if (nano_first.ok() && nano_second.ok())
+		{
+			CHECK_EQ(nano_first.value(), 5000000ULL);
+			CHECK_EQ(nano_second.value(), 6000000ULL);
+		}
+	}
 
 	// Method lookup walks the superclass chain but never creates.
 	const uint64_t object = world.findClass("java/lang/Object");

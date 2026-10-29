@@ -33,6 +33,9 @@ constexpr uint64_t kNameSize = 16;
 constexpr uint64_t kPathSize = 0x100;
 
 constexpr uint64_t kClockMonotonic = 1;
+constexpr uint64_t kClockProcessCputime = 2;
+constexpr uint64_t kClockRealtimeCoarse = 5;
+constexpr uint64_t kClockMonotonicCoarse = 6;
 constexpr uint64_t kClockInvalid = 99;
 constexpr uint64_t kRlimitNoFile = 7;
 constexpr uint64_t kPrGetName = 16;
@@ -203,6 +206,22 @@ int main() {
         CHECK(values[0] >= 0);
         CHECK(values[1] >= 0 && values[1] < 1000000000);
     }
+    // COARSE clocks used to return EINVAL; libc++/pthread probe them.
+    CHECK_EQ(callGuest(instance, functions.clock_gettime,
+                       { kClockRealtimeCoarse, timespec_buffer }),
+             0);
+    {
+        int64_t values[2] = {};
+        readGuest(instance, timespec_buffer, values, sizeof(values));
+        CHECK(values[0] > 0);
+    }
+    CHECK_EQ(callGuest(instance, functions.clock_gettime,
+                       { kClockMonotonicCoarse, timespec_buffer }),
+             0);
+    // CPU-time clocks are approximated by monotonic time (DuckDroid parity).
+    CHECK_EQ(callGuest(instance, functions.clock_gettime,
+                       { kClockProcessCputime, timespec_buffer }),
+             0);
     CHECK(failed(callGuest(instance, functions.clock_gettime,
                            { kClockInvalid, timespec_buffer })));
     CHECK_EQ(guestErrno(), kEinval);

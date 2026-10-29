@@ -167,7 +167,8 @@ SvcDispatcher::SvcDispatcher(RuntimeMemory &memory,
 	uint32_t pid,
 	threads::RuntimeThread &thread,
 	threads::ThreadSystem &threads,
-	vfs::VirtualFileSystem &vfs)
+	vfs::VirtualFileSystem &vfs,
+	RuntimeClock &wall_clock)
 	: memory_(memory)
 	, thunks_(thunks)
 	, events_(events)
@@ -176,6 +177,7 @@ SvcDispatcher::SvcDispatcher(RuntimeMemory &memory,
 	, thread_(thread)
 	, threads_(threads)
 	, vfs_(vfs)
+	, wall_clock_(wall_clock)
 {
 }
 
@@ -309,7 +311,7 @@ int64_t SvcDispatcher::dispatchSyscall(uint32_t number, const std::array<uint64_
 	++stats_.svc_calls;
 	stats_.last_syscall = number;
 
-	SyscallContext ctx{ {}, memory_, pid_, thread_.tid, thread_, threads_, vfs_ };
+	SyscallContext ctx{ {}, memory_, pid_, thread_.tid, thread_, threads_, vfs_, wall_clock_ };
 	for (size_t i = 0; i < kSyscallArgCount; ++i)
 	{
 		ctx.args[i] = args[i];

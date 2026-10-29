@@ -122,6 +122,15 @@ class RuntimeInstance
 	// UTF-8 contents of a jstring handle returned by guest code.
 	Result<std::string> jniStringUtf8(uint64_t handle) const;
 
+	// Deterministic time (DuckDroid parity). Default: the host clock. After
+	// setWallTimeNs/setMonotonicTimeNs every read returns the current value and
+	// advances exactly 1 ms, so a replay is byte-identical. Setting the value
+	// to 0 is a valid injected base; useHost*Clock restores host time.
+	void setWallTimeNs(uint64_t ns);
+	void setMonotonicTimeNs(uint64_t ns);
+	void useHostWallClock();
+	void useHostMonotonicClock();
+
 	// Strict-mode failures (missing class/method/field, unsupported JNI slot).
 	uint32_t addJniListener(observer::EventBus::JniListener listener);
 	bool removeJniListener(uint32_t id);

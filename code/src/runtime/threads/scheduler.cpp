@@ -79,6 +79,10 @@ Result<void> ThreadScheduler::start()
 	{
 		return Error{ ErrorCode::Internal, "the scheduler requires a file system" };
 	}
+	if (config_.clock == nullptr)
+	{
+		return Error{ ErrorCode::Internal, "the scheduler requires a clock" };
+	}
 	next_tid_ = config_.tid + 1;
 
 	auto created = createThreadObject(config_.tid, 0, true);
@@ -164,7 +168,8 @@ Result<std::unique_ptr<RuntimeThread> > ThreadScheduler::createThreadObject(
 		config_.pid,
 		*thread,
 		*this,
-		*config_.vfs);
+		*config_.vfs,
+		*config_.clock);
 
 	auto engine = createEngineFor(*thread);
 	if (!engine.ok())

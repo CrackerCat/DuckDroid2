@@ -22,6 +22,7 @@ namespace duckemu::runtime
 class RuntimeMemory;
 class UnicornBackend;
 class ThunkTable;
+class RuntimeClock;
 
 namespace observer
 {
@@ -48,6 +49,8 @@ struct SchedulerConfig
 	size_t diagnostic_capacity = 1u << 14;
 	// Process-wide file table; every dispatcher gets the same instance.
 	vfs::VirtualFileSystem *vfs = nullptr;
+	// Instance-wide wall/monotonic clock (injectable for replays).
+	RuntimeClock *clock = nullptr;
 };
 
 // Owns the guest threads of one RuntimeInstance. One host thread per guest

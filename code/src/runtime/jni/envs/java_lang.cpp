@@ -1,8 +1,8 @@
-#include <chrono>
 #include <cstdio>
 #include <string>
 #include <utility>
 
+#include "runtime/clock/runtime_clock.hpp"
 #include "runtime/jni/envs/envs.hpp"
 #include "runtime/jni/world/java_world.hpp"
 
@@ -179,20 +179,16 @@ Result<void> installSystem(JavaWorld &world)
 	const uint64_t klass = declared.value();
 
 	auto result = declare(world, klass, "currentTimeMillis", "()J", true,
-		[](JavaWorld &, InvokeContext &) -> Result<uint64_t> {
-			const auto now = std::chrono::system_clock::now().time_since_epoch();
-			return static_cast<uint64_t>(
-				std::chrono::duration_cast<std::chrono::milliseconds>(now).count());
+		[](JavaWorld &java, InvokeContext &) -> Result<uint64_t> {
+			return java.clock().nextRealtimeNs() / 1000000ULL;
 		});
 	if (!result.ok())
 	{
 		return result;
 	}
 	result = declare(world, klass, "nanoTime", "()J", true,
-		[](JavaWorld &, InvokeContext &) -> Result<uint64_t> {
-			const auto now = std::chrono::steady_clock::now().time_since_epoch();
-			return static_cast<uint64_t>(
-				std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
+		[](JavaWorld &java, InvokeContext &) -> Result<uint64_t> {
+			return java.clock().nextMonotonicNs();
 		});
 	if (!result.ok())
 	{

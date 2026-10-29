@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <optional>
 #include <string>
 
 #include "libeleven_case/libeleven_env.hpp"
@@ -50,6 +51,8 @@ std::string romLibc()
 int main(int argc, char **argv)
 {
 	std::string trace_path;
+	std::optional<uint64_t> wall_time_ns;
+	std::optional<uint64_t> monotonic_time_ns;
 	int first = 1;
 	int last = 1;
 	int values = 0;
@@ -64,6 +67,24 @@ int main(int argc, char **argv)
 				return 2;
 			}
 			trace_path = argv[++index];
+			continue;
+		}
+		if (argument == "--wall-time-ns" || argument == "--monotonic-time-ns")
+		{
+			if (index + 1 >= argc)
+			{
+				std::fprintf(stderr, "%s needs a value\n", argument.c_str());
+				return 2;
+			}
+			const uint64_t value = std::strtoull(argv[++index], nullptr, 10);
+			if (argument == "--wall-time-ns")
+			{
+				wall_time_ns = value;
+			}
+			else
+			{
+				monotonic_time_ns = value;
+			}
 			continue;
 		}
 		const int value = std::atoi(argument.c_str());
@@ -91,6 +112,17 @@ int main(int argc, char **argv)
 		return 1;
 	}
 	RuntimeInstance &instance = *created.value();
+
+	// Deterministic replay inputs (DuckDroid parity): injected clocks start at
+	// the given value and advance 1 ms per read.
+	if (wall_time_ns.has_value())
+	{
+		instance.setWallTimeNs(wall_time_ns.value());
+	}
+	if (monotonic_time_ns.has_value())
+	{
+		instance.setMonotonicTimeNs(monotonic_time_ns.value());
+	}
 
 	// The project's Java side. Explicit and before any module is loaded: this
 	// is the single wiring point, no static registration anywhere.

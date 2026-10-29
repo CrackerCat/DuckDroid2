@@ -13,6 +13,7 @@
 namespace duckemu::runtime
 {
 class RuntimeMemory;
+class RuntimeClock;
 }
 
 namespace duckemu::runtime::jni
@@ -81,7 +82,7 @@ class JniArena
 class JavaWorld
 {
     public:
-	explicit JavaWorld(RuntimeMemory &memory);
+	explicit JavaWorld(RuntimeMemory &memory, RuntimeClock &clock);
 
 	// Bootstraps java/lang/Class and java/lang/Object. Must run before any
 	// environment module is installed.
@@ -175,6 +176,12 @@ class JavaWorld
 	{
 		return memory_;
 	}
+	// Shared with the syscall layer: java.lang.System and clock_gettime must
+	// observe the same injected/real clock.
+	[[nodiscard]] RuntimeClock &clock()
+	{
+		return clock_;
+	}
 	[[nodiscard]] uint64_t classClass() const
 	{
 		return class_class_;
@@ -213,6 +220,7 @@ class JavaWorld
 	Result<uint64_t> allocateRecord(uint64_t size, uint32_t kind);
 
 	RuntimeMemory &memory_;
+	RuntimeClock &clock_;
 	JniArena arena_;
 	std::vector<ClassRecord> classes_;
 	std::unordered_map<uint64_t, size_t> class_by_object_;

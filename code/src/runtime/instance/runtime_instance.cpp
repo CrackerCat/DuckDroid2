@@ -3,6 +3,7 @@
 #include <utility>
 
 #include "runtime/backend/unicorn/unicorn_backend.hpp"
+#include "runtime/clock/runtime_clock.hpp"
 #include "runtime/jni/env/jni_state.hpp"
 #include "runtime/jni/envs/envs.hpp"
 #include "runtime/jni/world/java_world.hpp"
@@ -35,6 +36,9 @@ struct RuntimeInstance::Impl
 	};
 
 	RuntimeConfig config;
+	// Instance-wide time source. Defaults to the host clock; a replay can pin
+	// it with setWallTimeNs/setMonotonicTimeNs.
+	RuntimeClock clock;
 	RuntimeMemory memory;
 	std::unique_ptr<observer::EventBus> events;
 	std::unique_ptr<UnicornBackend> backend;
@@ -121,7 +125,7 @@ Result<std::unique_ptr<RuntimeInstance> > RuntimeInstance::create(const RuntimeC
 	}
 	impl->thunks = std::move(thunks).value();
 
-	auto java_world = std::make_unique<jni::JavaWorld>(impl->memory);
+	auto java_world = std::make_unique<jni::JavaWorld>(impl->memory, impl->clock);
 	if (auto initialized = java_world->initialize(); !initialized.ok())
 	{
 		return initialized.error();
@@ -213,6 +217,7 @@ Result<std::unique_ptr<RuntimeInstance> > RuntimeInstance::create(const RuntimeC
 	scheduler_config.record_memory_access = config.record_memory_access;
 	scheduler_config.diagnostic_capacity = config.diagnostic_capacity;
 	scheduler_config.vfs = impl->files.get();
+	scheduler_config.clock = &impl->clock;
 
 	impl->scheduler = std::make_unique<threads::ThreadScheduler>(
 		impl->memory, *impl->backend, *impl->thunks, *impl->events, scheduler_config);
@@ -478,6 +483,30 @@ Result<GuestVA> RuntimeInstance::lookupRegisteredNative(std::string_view class_d
 Result<std::string> RuntimeInstance::jniStringUtf8(uint64_t handle) const
 {
 	return impl_->jni->stringUtf8(handle);
+}
+
+void RuntimeInstance::setWallTimeNs(uint64_t ns)
+{
+	auto execution = impl_->scheduler->lockExecution();
+	impl_->clock.setWallTimeNs(ns);
+}
+
+void RuntimeInstance::setMonotonicTimeNs(uint64_t ns)
+{
+	auto execution = impl_->scheduler->lockExecution();
+	impl_->clock.setMonotonicTimeNs(ns);
+}
+
+void RuntimeInstance::useHostWallClock()
+{
+	auto execution = impl_->scheduler->lockExecution();
+	impl_->clock.useHostWallClock();
+}
+
+void RuntimeInstance::useHostMonotonicClock()
+{
+	auto execution = impl_->scheduler->lockExecution();
+	impl_->clock.useHostMonotonicClock();
 }
 
 uint32_t RuntimeInstance::addJniListener(observer::EventBus::JniListener listener)

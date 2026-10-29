@@ -10,6 +10,11 @@
 #include "runtime/observer/semantic/svc_event.hpp"
 #include "runtime/observer/trace/trace_clock.hpp"
 
+namespace duckemu::runtime
+{
+class RuntimeClock;
+}
+
 namespace duckemu::runtime::observer
 {
 class EventBus;
@@ -41,7 +46,8 @@ class SvcDispatcher
 		uint32_t pid,
 		threads::RuntimeThread &thread,
 		threads::ThreadSystem &threads,
-		vfs::VirtualFileSystem &vfs);
+		vfs::VirtualFileSystem &vfs,
+		RuntimeClock &wall_clock);
 
 	// UC_HOOK_INTR entry. Decodes the trapping SVC at PC - 4:
 	//   imm == 0            -> Linux syscall, number in x8, args x0..x5
@@ -79,6 +85,7 @@ class SvcDispatcher
 	threads::RuntimeThread &thread_;
 	threads::ThreadSystem &threads_;
 	vfs::VirtualFileSystem &vfs_;
+	RuntimeClock &wall_clock_;
 	Stats stats_;
 };
 

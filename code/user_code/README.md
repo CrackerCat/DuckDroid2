@@ -16,4 +16,6 @@
   ```bash
   cmake --build build --target duckemu_libeleven_case
   ./build/user_code/duckemu_libeleven_case 1 5
+  # 确定性回放：注入墙钟，之后每次读 +1 ms
+  ./build/user_code/duckemu_libeleven_case --wall-time-ns 1792886400000000000 1 5
   ```

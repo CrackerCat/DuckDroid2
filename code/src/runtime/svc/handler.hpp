@@ -5,6 +5,11 @@
 
 #include "runtime/memory/address_space.hpp"
 
+namespace duckemu::runtime
+{
+class RuntimeClock;
+}
+
 namespace duckemu::runtime::threads
 {
 class RuntimeThread;
@@ -30,6 +35,8 @@ struct SyscallContext
 	threads::ThreadSystem &threads;
 	// Process-wide file namespace and descriptor table.
 	vfs::VirtualFileSystem &vfs;
+	// Instance-wide wall/monotonic clock; shared with Java System.
+	RuntimeClock &clock;
 };
 
 // Each subsystem returns nullopt for "not my syscall"; the dispatcher then

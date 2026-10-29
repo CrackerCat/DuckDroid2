@@ -179,8 +179,9 @@ Result<uint64_t> JniArena::allocate(uint64_t size, uint64_t alignment)
 	return aligned;
 }
 
-JavaWorld::JavaWorld(RuntimeMemory &memory)
+JavaWorld::JavaWorld(RuntimeMemory &memory, RuntimeClock &clock)
 	: memory_(memory)
+	, clock_(clock)
 	, arena_(memory)
 {
 }

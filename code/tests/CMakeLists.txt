@@ -215,8 +215,8 @@ set(DUCKEMU_JNI_INCLUDE
     "${DUCKEMU_ANDROID_ENV_ROOT}/ROM/libnativehelper/include_jni"
     CACHE PATH "Directory containing the ROM's jni.h")
 set(DUCKEMU_LIBELEVEN_CASE_SO
-    "${DUCKEMU_ANDROID_ENV_ROOT}/DuckDroid/code/user_code/libeleven_case/assets/libeleven.so"
-    CACHE FILEPATH "libeleven sample used by the M5 JNI gate")
+    "${CMAKE_CURRENT_SOURCE_DIR}/../user_code/libeleven_case/assets/libeleven.so"
+    CACHE FILEPATH "libeleven sample used by the M5/M6 JNI tests")
 
 # ---------------------------------------------------------------------------
 # M5: JNI fixture. Compiled against the ROM's real jni.h, with no DT_NEEDED;
@@ -273,10 +273,28 @@ add_test(NAME 05_jni_real COMMAND 05_jni_real)
 set_tests_properties(05_jni_real PROPERTIES TIMEOUT 120)
 duckemu_set_warnings(05_jni_real)
 
+# M6: deterministic wall clock; libeleven's data(n) becomes byte-reproducible.
+add_executable(06_clock_injection integration/06_clock_injection.cpp)
+target_link_libraries(06_clock_injection PRIVATE
+  duckemu_runtime duckemu_test_support duckemu_user_libeleven)
+target_compile_definitions(06_clock_injection PRIVATE
+  DUCKEMU_TRACE_DIR="${CMAKE_CURRENT_BINARY_DIR}/traces"
+  DUCKEMU_ROM_BOOTSTRAP="${DUCKEMU_ROM_BOOTSTRAP}"
+  DUCKEMU_ROM_LIB64="${DUCKEMU_ROM_LIB64}"
+  DUCKEMU_LIBELEVEN_SO="${DUCKEMU_LIBELEVEN_CASE_SO}")
+add_test(NAME 06_clock_injection COMMAND 06_clock_injection)
+set_tests_properties(06_clock_injection PROPERTIES TIMEOUT 120)
+duckemu_set_warnings(06_clock_injection)
+
 add_executable(jni_world_test unit/runtime/jni_world_test.cpp)
 target_link_libraries(jni_world_test PRIVATE duckemu_runtime duckemu_test_support)
 add_test(NAME jni_world_test COMMAND jni_world_test)
 duckemu_set_warnings(jni_world_test)
+
+add_executable(runtime_clock_test unit/runtime/runtime_clock_test.cpp)
+target_link_libraries(runtime_clock_test PRIVATE duckemu_runtime duckemu_test_support)
+add_test(NAME runtime_clock_test COMMAND runtime_clock_test)
+duckemu_set_warnings(runtime_clock_test)
 
 add_executable(jni_layout_test unit/runtime/jni_layout_test.cpp)
 target_include_directories(jni_layout_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")

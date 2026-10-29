@@ -67,6 +67,7 @@ duckemu_set_warnings(duckemu_common)
 
 add_library(duckemu_runtime STATIC
   src/runtime/instance/runtime_instance.cpp
+  src/runtime/clock/runtime_clock.cpp
   src/runtime/jni/jni_types.cpp
   src/runtime/jni/abi/abi_adapter.cpp
   src/runtime/jni/env/jni_state.cpp

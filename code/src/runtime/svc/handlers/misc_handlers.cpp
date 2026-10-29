@@ -1,10 +1,10 @@
 #include <array>
-#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <random>
 #include <string_view>
 
+#include "runtime/clock/runtime_clock.hpp"
 #include "runtime/memory/address_space.hpp"
 #include "runtime/svc/handler.hpp"
 #include "runtime/svc/syscall_numbers.hpp"
@@ -171,38 +171,36 @@ int64_t sysClockGettime(SyscallContext &ctx)
 	constexpr uint64_t kClockProcessCputime = 2;
 	constexpr uint64_t kClockThreadCputime = 3;
 	constexpr uint64_t kClockMonotonicRaw = 4;
+	constexpr uint64_t kClockRealtimeCoarse = 5;
+	constexpr uint64_t kClockMonotonicCoarse = 6;
 	constexpr uint64_t kClockBoottime = 7;
 
-	int64_t seconds = 0;
-	int64_t nanoseconds = 0;
+	uint64_t ns = 0;
 	switch (clock_id)
 	{
 	case kClockRealtime:
-	{
-		const auto now = std::chrono::system_clock::now().time_since_epoch();
-		const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
-		seconds = ns / 1000000000;
-		nanoseconds = ns % 1000000000;
+	case kClockRealtimeCoarse:
+		ns = ctx.clock.nextRealtimeNs();
 		break;
-	}
 	case kClockMonotonic:
 	case kClockMonotonicRaw:
+	case kClockMonotonicCoarse:
 	case kClockBoottime:
-	{
-		const auto now = std::chrono::steady_clock::now().time_since_epoch();
-		const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
-		seconds = ns / 1000000000;
-		nanoseconds = ns % 1000000000;
+		ns = ctx.clock.nextMonotonicNs();
 		break;
-	}
+	// DuckDroid parity: CPU-time clocks are approximated by monotonic time
+	// instead of returning a fabricated zero. When a target actually measures
+	// CPU time, replace these with a real CPU clock.
 	case kClockProcessCputime:
 	case kClockThreadCputime:
+		ns = ctx.clock.nextMonotonicNs();
 		break;
 	default:
 		return -kEinval;
 	}
 
-	const int64_t values[2] = { seconds, nanoseconds };
+	const int64_t values[2] = { static_cast<int64_t>(ns / 1000000000ULL),
+		static_cast<int64_t>(ns % 1000000000ULL) };
 	auto written = ctx.memory.write(GuestVA{ timespec }, values, sizeof(values));
 	return written.ok() ? 0 : -kEfault;
 }
@@ -213,9 +211,10 @@ int64_t sysGettimeofday(SyscallContext &ctx)
 	const uint64_t timezone = ctx.args[1];
 	if (timeval != 0)
 	{
-		const auto now = std::chrono::system_clock::now().time_since_epoch();
-		const auto us = std::chrono::duration_cast<std::chrono::microseconds>(now).count();
-		const int64_t values[2] = { us / 1000000, us % 1000000 };
+		const uint64_t ns = ctx.clock.nextRealtimeNs();
+		const uint64_t us = ns / 1000ULL;
+		const int64_t values[2] = { static_cast<int64_t>(us / 1000000ULL),
+			static_cast<int64_t>(us % 1000000ULL) };
 		auto written = ctx.memory.write(GuestVA{ timeval }, values, sizeof(values));
 		if (!written.ok())
 		{
