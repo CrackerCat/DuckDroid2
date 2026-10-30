@@ -63,7 +63,7 @@ thunk / SVC 回到宿主 C++。
   重定位、`DT_RELR`、`PT_TLS` / TLSDESC、IFUNC/IRELATIVE；运行 `__libc_preinit`，
   `malloc` 走真 scudo，`pthread_create/join` 走真 bionic。
 - **动态加载**：ld-android 的 `__loader_dlopen/android_dlopen_ext/dlsym/dlvsym/
-  dlerror/dlclose/dladdr/dl_iterate_phdr` 是真实实现；构造器与 IFUNC 在嵌套 guest
+dlerror/dlclose/dladdr/dl_iterate_phdr` 是真实实现；构造器与 IFUNC 在嵌套 guest
   帧里跑完才返回，`dl_iterate_phdr` 带真实 program header。
 - **CFI shadow**：虚拟 linker 在依赖加载后调用一次 `__cfi_init`，映射 64 MiB
   零表，经过 `__cfi_slowpath` 的间接调用不再读地址 0。
@@ -74,9 +74,9 @@ thunk / SVC 回到宿主 C++。
   preinit、scudo、pthread、文件 IO、事件循环与目标实际用到的面。
 - **只读根 + 可写沙箱**：ROM/宿主根只读；每个实例可挂一个宿主写目录作为覆盖层，
   支持 `O_CREAT/O_TRUNC/O_APPEND/O_EXCL`、`mkdirat/unlinkat/renameat/ftruncate/
-  fsync` 与注入的 uid/gid/时间戳，读操作先查沙箱再回落只读根。
+fsync` 与注入的 uid/gid/时间戳，读操作先查沙箱再回落只读根。
 - **`/proc`**：优先使用目标自带的真机快照，缺失时合成 `/proc/{version,cpuinfo,
-  self/status,self/cmdline,self/comm,self/maps,self/mem}` 等；`readlinkat` 支持
+self/status,self/cmdline,self/comm,self/maps,self/mem}` 等；`readlinkat` 支持
   `/proc/self/{exe,cwd,root,fd/N}`。
 - **合成挂载**：`/dev/{null,zero,random,urandom}`（含 `rdev` 与读写模式语义）、
   `/dev/__properties__`。
@@ -136,14 +136,16 @@ thunk / SVC 回到宿主 C++。
   运行，且在 trace 的 PRE 采样之前。可读/写 X/W 寄存器、读/写/强写 guest
   内存、`setPc` 跳过、按顶层调用归零的 `hit_count`。用于观测和故障注入
   （白盒 AES/DFA 这类需要精确改寄存器或内存的场景）。
+- **回放**:这个东西就没必要实现，因为你把随机和时间戳固定下来，参数一样的情况下，不可能变化的，所以没必要再做一个所谓的回放和dump运行时内存
+- **hook**:只做原生的，在执行的代码更高层做hook，不做那种直接侵入执行代码的
 
 ### 真实目标
 
-| 目标 | 入口 | 结果 |
-|---|---|---|
-| libeleven | `ChallengeElevenFragment.data(I)Ljava/lang/String;` | 输出 `n:<epoch_ms>`；`data(1..100)` 的 `n:` 段与参考 runner 逐值一致 |
-| 京东 16.1.50 | `Bridge.main(101)` | 同一注入时钟下与 DuckDroid 参考 runner 逐字节一致；带 9 条目精简 APK 与 Mi 8 属性画像（SDK 32） |
-| 得物 6.1.5.10 | `SzSdk.lf([BZZZ)[B` | 挂真机 APK 后 body 长度 3263 与抓包一致；注入时钟 + 种子后 3183 跨进程逐字节复现；端到端 `/call` HTTP 200 / `c=10000`，解出 92 字符 sk |
+| 目标          | 入口                                                | 结果                                                                                                                                   |
+| ------------- | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| libeleven     | `ChallengeElevenFragment.data(I)Ljava/lang/String;` | 输出 `n:<epoch_ms>`；`data(1..100)` 的 `n:` 段与参考 runner 逐值一致                                                                   |
+| 京东 16.1.50  | `Bridge.main(101)`                                  | 同一注入时钟下与 DuckDroid 参考 runner 逐字节一致；带 9 条目精简 APK 与 Mi 8 属性画像（SDK 32）                                        |
+| 得物 6.1.5.10 | `SzSdk.lf([BZZZ)[B`                                 | 挂真机 APK 后 body 长度 3263 与抓包一致；注入时钟 + 种子后 3183 跨进程逐字节复现；端到端 `/call` HTTP 200 / `c=10000`，解出 92 字符 sk |
 
 ## 尚未实现
 
@@ -154,15 +156,10 @@ thunk / SVC 回到宿主 C++。
   timespec 超时已支持）。
 - **目录 fd 与 `getdents64`**：`opendir/readdir` 还不可用；合成挂载的子项枚举也
   依赖它。
-- **`ioctl` 与 io 变体**：按当前目标需求暂不做（审计 #6/#8）。
-- **严格 CFI**：shadow 是零表，`__loader_cfi_fail` 被绑成返回桩，检查被跳过而不是
-  按真机终止。
-- **回放器 / 内存快照**：指令级 trace 已有，但没有 `mem/` 快照，也没有回放器。
-- **inline hook / trampoline**：地址 hook 已能观测、改寄存器/内存/PC，
-  但还没有替换原函数、复制原指令的 trampoline（Dobby/xHook 那一类）。
+- **`ioctl` 与 io 变体**：按当前目标需求暂不做（审计 #6/#8 要是真写，猴年马月去了，真给Linux实现了）。
+- **严格 CFI**：shadow 是零表，`__loader_cfi_fail` 被绑成返回桩，检查被跳过而不是按真机终止(这个案例非常非常少，懒得去专门维护了)。
 - **回溯**：x29 帧链不是 CFI/DWARF；release so 默认 omit-frame-pointer，链会很短。
-- **16 KiB 页**：只在 4 KiB 页上验证。
-- **更多目标**：快手、抖音还没接；`libsgmainso` 只验证了加载和绑定。
+- **16 KiB 页**：只在 4 KiB 页上验证(能跑就行，以后有时间再写)。
 
 ## 架构
 
@@ -363,30 +360,30 @@ python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 只在本机测过，且**没有和 unidbg 做同目标对拍**：
 
-| 目标 | 配置 | 结果 |
-|---|---|---|
-| libeleven | 1 Worker × 4 实例，8 客户端，10000 次 `data(7)` | 8176 req/s，p50 0.622 ms，p99 1.322 ms |
-| 京东 16.1.50 | 2 实例 / 2 客户端 | 约 23 req/s，平均 87 ms |
-| 京东 16.1.50 | 4 实例 / 8 客户端 | 约 39 req/s，平均 201 ms |
+| 目标         | 配置                                            | 结果                                   |
+| ------------ | ----------------------------------------------- | -------------------------------------- |
+| libeleven    | 1 Worker × 4 实例，8 客户端，10000 次 `data(7)` | 8176 req/s，p50 0.622 ms，p99 1.322 ms |
+| 京东 16.1.50 | 2 实例 / 2 客户端                               | 约 23 req/s，平均 87 ms                |
+| 京东 16.1.50 | 4 实例 / 8 客户端                               | 约 39 req/s，平均 201 ms               |
 
 libeleven 很简单（基本是魔改 base64），这组数字只说明链路通；京东单次签名约
 100 ms guest CPU，单实例串行。得物尚未做吞吐基线。
 
 ## 路线图
 
-| 里程碑 | 内容 | Gate | 状态 |
-|---|---|---|---|
-| M0 探针 | 用源码级事实钉死 Unicorn 语义（九条探针） | 九条全有实测数据 | ✅ |
-| M1 最小闭环 | 裸 blob、TLS 正确、SVC 可分发 | `01_tls_read`、`02_pure_native` | ✅ |
-| M2 可观测性 | svc trace、内存事件、帧链 dump | `02_pure_native`、`02_stack_dump` | ✅ |
-| M3 线程 | clone/futex/阻塞完成式、每线程 engine | `03_pthread_join` | ✅ |
-| M4 loader | ELF 加载、重定位、依赖递归 | `04_so_load` | ✅ |
-| M4.5 loader 补全 | APS2/RELR、TLS/TLSDESC、IFUNC、真依赖 | `04b_libc_map` | ✅ |
-| M4.6 真 bionic | preinit/scudo、VFS/`/proc`、真 pthread | `04c_bionic` | ✅ |
-| M5 JNI | JNIEnv、`RegisterNatives`、严格 Java 环境 | `05_jni_stub` | ✅ |
-| M6 真实目标 | libeleven / 京东 / 得物结果一致 | `06_clock_injection`、`07e_jdgs_plugin`、`07f_szstone_plugin` | ✅ |
-| M7 服务化 | System/Worker/Instance、UDS、warm pool | `07_end_to_end` | ✅ |
-| M8 分析面 | 指令级 trace（LR 结尾）、绝对地址 hook | `insn_decode_test`、`08_insn_trace`、`08_insn_trace_threads`、`08_address_hook` | ✅ |
+| 里程碑           | 内容                                      | Gate                                                                            | 状态 |
+| ---------------- | ----------------------------------------- | ------------------------------------------------------------------------------- | ---- |
+| M0 探针          | 用源码级事实钉死 Unicorn 语义（九条探针） | 九条全有实测数据                                                                | ✅   |
+| M1 最小闭环      | 裸 blob、TLS 正确、SVC 可分发             | `01_tls_read`、`02_pure_native`                                                 | ✅   |
+| M2 可观测性      | svc trace、内存事件、帧链 dump            | `02_pure_native`、`02_stack_dump`                                               | ✅   |
+| M3 线程          | clone/futex/阻塞完成式、每线程 engine     | `03_pthread_join`                                                               | ✅   |
+| M4 loader        | ELF 加载、重定位、依赖递归                | `04_so_load`                                                                    | ✅   |
+| M4.5 loader 补全 | APS2/RELR、TLS/TLSDESC、IFUNC、真依赖     | `04b_libc_map`                                                                  | ✅   |
+| M4.6 真 bionic   | preinit/scudo、VFS/`/proc`、真 pthread    | `04c_bionic`                                                                    | ✅   |
+| M5 JNI           | JNIEnv、`RegisterNatives`、严格 Java 环境 | `05_jni_stub`                                                                   | ✅   |
+| M6 真实目标      | libeleven / 京东 / 得物结果一致           | `06_clock_injection`、`07e_jdgs_plugin`、`07f_szstone_plugin`                   | ✅   |
+| M7 服务化        | System/Worker/Instance、UDS、warm pool    | `07_end_to_end`                                                                 | ✅   |
+| M8 分析面        | 指令级 trace（LR 结尾）、绝对地址 hook    | `insn_decode_test`、`08_insn_trace`、`08_insn_trace_threads`、`08_address_hook` | ✅   |
 
 执行规则：一个里程碑 = 一个可 review 的 PR；gate 是测试文件，不是口头结论；
 不提前实现下一阶段的抽象。M6 的 reset 语义由 `07d_session_reset` 覆盖
