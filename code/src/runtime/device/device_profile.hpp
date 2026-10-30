@@ -55,6 +55,16 @@ struct DeviceProfile
 	std::string process_name = "duckemu";
 	std::string android_id = "0000000000000000";
 
+	// /proc/self/exe. App processes are forked from the zygote, so this is the
+	// app_process binary rather than anything this runtime loaded.
+	std::string executable_path = "/system/bin/app_process64";
+
+	// /data storage picture (statfs): Android formats it f2fs or ext4. Install
+	// and update flows probe the byte counts, so they are part of the profile.
+	uint32_t data_file_system_type = 0xF2F52010; // F2FS_SUPER_MAGIC
+	uint64_t data_total_bytes = 64ull * 1024 * 1024 * 1024;
+	uint64_t data_free_bytes = 32ull * 1024 * 1024 * 1024;
+
 	// Display, for the Java side and target packs.
 	uint32_t display_width = 1080;
 	uint32_t display_height = 2240;

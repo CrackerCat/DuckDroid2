@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "runtime/memory/address_space.hpp"
+#include "runtime/random/random_source.hpp"
 
 namespace duckemu::runtime::loader
 {
@@ -99,15 +100,23 @@ Result<void> BionicGlobals::initialize()
 		return memory_.write(GuestVA{ address }, data, size);
 	};
 
-	// AT_RANDOM is also the source of __stack_chk_guard.
+	// AT_RANDOM is also the source of __stack_chk_guard. It reads the instance
+	// entropy stream so a seeded replay gets the same canary.
 	uint8_t random_bytes[16] = {};
-	std::random_device device;
-	uint64_t seed = (static_cast<uint64_t>(device()) << 32) ^ device();
-	std::mt19937_64 generator(seed);
-	for (size_t i = 0; i < sizeof(random_bytes); i += 8)
+	if (config_.random != nullptr)
 	{
-		const uint64_t word = generator();
-		std::memcpy(random_bytes + i, &word, sizeof(word));
+		config_.random->fill(random_bytes, sizeof(random_bytes));
+	}
+	else
+	{
+		std::random_device device;
+		uint64_t seed = (static_cast<uint64_t>(device()) << 32) ^ device();
+		std::mt19937_64 generator(seed);
+		for (size_t i = 0; i < sizeof(random_bytes); i += 8)
+		{
+			const uint64_t word = generator();
+			std::memcpy(random_bytes + i, &word, sizeof(word));
+		}
 	}
 	if (std::all_of(std::begin(random_bytes), std::end(random_bytes), [](uint8_t b) { return b == 0; }))
 	{

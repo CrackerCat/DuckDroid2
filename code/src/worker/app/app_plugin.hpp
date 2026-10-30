@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #pragma once
 
+#include <cstdint>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -33,6 +35,8 @@ struct AppContext
 	// build.prop-format property overrides, layered over the identity entries
 	// derived from the app's device picture.
 	std::string property_file;
+	// Pins getrandom / /dev/{u,}random / AT_RANDOM for a reproducible replay.
+	std::optional<uint64_t> random_seed;
 };
 
 // One request as the plugin sees it. Deliberately not protocol::Request: the

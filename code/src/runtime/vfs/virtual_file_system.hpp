@@ -32,6 +32,25 @@ struct DeviceProfile;
 namespace duckemu::runtime::vfs
 {
 
+// statfs(2) view of one mount (arm64 `struct statfs`, all 64-bit words).
+struct FileSystemStats
+{
+	uint64_t type = 0;
+	uint64_t block_size = 4096;
+	uint64_t blocks = 0;
+	uint64_t blocks_free = 0;
+	uint64_t blocks_available = 0;
+	uint64_t files = 0;
+	uint64_t files_free = 0;
+	uint32_t fsid[2] = {};
+	uint64_t name_length = 255;
+	uint64_t fragment_size = 4096;
+	uint64_t flags = 0;
+};
+
+// ST_RDONLY in f_flags.
+inline constexpr uint64_t kMountReadOnly = 0x1;
+
 struct VfsConfig
 {
 	uint32_t pid = 1000;
@@ -114,6 +133,19 @@ class VirtualFileSystem
 	// faccessat(2). W_OK/X_OK are refused: the mounted roots are read-only.
 	Result<void> access(uint64_t dirfd, std::string_view path, uint64_t mode);
 
+	// readlinkat(2). Only /proc/self magic links are modelled (exe, cwd, root,
+	// fd/N); anything else that exists answers InvalidArgument (EINVAL), like
+	// the kernel for a non-symlink.
+	[[nodiscard]] Result<std::string> readLink(uint64_t dirfd, std::string_view path);
+
+	// statfs(2)/fstatfs(2). Paths are classified into the mounts the device
+	// picture describes (/data capacity comes from DeviceProfile).
+	[[nodiscard]] Result<FileSystemStats> statfs(uint64_t dirfd, std::string_view path);
+	[[nodiscard]] Result<FileSystemStats> statfsFd(uint64_t fd);
+	// The view a bare /proc, /dev or /data path would get; used by handlers
+	// for descriptor kinds that carry no path.
+	[[nodiscard]] FileSystemStats fileSystemForPath(const std::string &guest_path) const;
+
 	[[nodiscard]] File *find(uint64_t fd) const
 	{
 		return fds_.find(fd);
@@ -176,6 +208,8 @@ class VirtualFileSystem
 	[[nodiscard]] std::optional<SyntheticNode> findSynthetic(std::string_view guest_path) const;
 	// Effective guest mode of a synthetic node.
 	[[nodiscard]] static uint32_t syntheticMode(const SyntheticNode &node);
+	// readlink target of an open descriptor (/proc/self/fd/N).
+	[[nodiscard]] Result<std::string> fileLink(File &file);
 	[[nodiscard]] ProcContext procContext() const;
 
 	RuntimeMemory &memory_;

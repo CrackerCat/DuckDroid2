@@ -478,6 +478,39 @@ add_test(NAME 04j_dev_nodes COMMAND 04j_dev_nodes)
 set_tests_properties(04j_dev_nodes PROPERTIES TIMEOUT 120)
 duckemu_set_warnings(04j_dev_nodes)
 
+# M4.6: /proc/self magic links through readlinkat(78).
+add_executable(04k_readlink integration/04k_readlink.cpp)
+target_link_libraries(04k_readlink PRIVATE duckemu_runtime duckemu_test_support)
+target_compile_definitions(04k_readlink PRIVATE
+  DUCKEMU_TRACE_DIR="${CMAKE_CURRENT_BINARY_DIR}/traces"
+  DUCKEMU_ROM_BOOTSTRAP="${DUCKEMU_ROM_BOOTSTRAP}"
+  DUCKEMU_ROM_LIB64="${DUCKEMU_ROM_LIB64}")
+add_test(NAME 04k_readlink COMMAND 04k_readlink)
+set_tests_properties(04k_readlink PROPERTIES TIMEOUT 120)
+duckemu_set_warnings(04k_readlink)
+
+# M4.6: seeded entropy across getrandom / /dev/urandom / AT_RANDOM.
+add_executable(04l_random_seed integration/04l_random_seed.cpp)
+target_link_libraries(04l_random_seed PRIVATE duckemu_runtime duckemu_test_support)
+target_compile_definitions(04l_random_seed PRIVATE
+  DUCKEMU_TRACE_DIR="${CMAKE_CURRENT_BINARY_DIR}/traces"
+  DUCKEMU_ROM_BOOTSTRAP="${DUCKEMU_ROM_BOOTSTRAP}"
+  DUCKEMU_ROM_LIB64="${DUCKEMU_ROM_LIB64}")
+add_test(NAME 04l_random_seed COMMAND 04l_random_seed)
+set_tests_properties(04l_random_seed PROPERTIES TIMEOUT 180)
+duckemu_set_warnings(04l_random_seed)
+
+# M4.6: statfs(43)/fstatfs(44) mount classification.
+add_executable(04m_statfs integration/04m_statfs.cpp)
+target_link_libraries(04m_statfs PRIVATE duckemu_runtime duckemu_test_support)
+target_compile_definitions(04m_statfs PRIVATE
+  DUCKEMU_TRACE_DIR="${CMAKE_CURRENT_BINARY_DIR}/traces"
+  DUCKEMU_ROM_BOOTSTRAP="${DUCKEMU_ROM_BOOTSTRAP}"
+  DUCKEMU_ROM_LIB64="${DUCKEMU_ROM_LIB64}")
+add_test(NAME 04m_statfs COMMAND 04m_statfs)
+set_tests_properties(04m_statfs PROPERTIES TIMEOUT 120)
+duckemu_set_warnings(04m_statfs)
+
 # M4.6 S3: VFS + /proc. A ROM symbols tree is mounted as guest "/" so the
 # read-only file mmap half of the gate has a real file to map.
 add_executable(04c_vfs integration/04c_vfs.cpp)

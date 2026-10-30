@@ -78,6 +78,7 @@ int run_instance_host(const InstanceHostConfig &config)
 	runtime_config.filesystem_roots = config.app.filesystem_roots;
 	runtime_config.filesystem_write_root = config.app.filesystem_write_root;
 	runtime_config.property_file = config.app.property_file;
+	runtime_config.random_seed = config.app.random_seed;
 	runtime_config.trace_path = config.trace_path;
 
 	auto created = runtime::RuntimeInstance::create(runtime_config);

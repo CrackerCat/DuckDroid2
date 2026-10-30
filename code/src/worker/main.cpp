@@ -83,6 +83,8 @@ struct Arguments
 	std::vector<std::string> filesystem_roots;
 	std::string filesystem_write_root;
 	std::string property_file;
+	bool has_random_seed = false;
+	uint64_t random_seed = 0;
 	std::string trace;
 	std::string instance_exec;
 	uint32_t instances = 1;
@@ -195,6 +197,16 @@ bool ParseArguments(int argc, char **argv, Arguments *arguments)
 			{
 				return false;
 			}
+		}
+		else if (argument == "--random-seed")
+		{
+			if (!TakeValue(argc, argv, &index, "--random-seed", &value) ||
+				!ParseU64(value, &arguments->random_seed))
+			{
+				std::fprintf(stderr, "worker: --random-seed needs a number\n");
+				return false;
+			}
+			arguments->has_random_seed = true;
 		}
 		else if (argument == "--trace")
 		{
@@ -312,6 +324,10 @@ int RunInstance(const Arguments &arguments)
 	config.app.filesystem_roots = arguments.filesystem_roots;
 	config.app.filesystem_write_root = arguments.filesystem_write_root;
 	config.app.property_file = arguments.property_file;
+	if (arguments.has_random_seed)
+	{
+		config.app.random_seed = arguments.random_seed;
+	}
 	config.trace_path = arguments.trace;
 	config.has_wall_time = arguments.has_wall_time;
 	config.wall_time_ns = arguments.wall_time_ns;
@@ -335,6 +351,10 @@ int RunSupervisor(const Arguments &arguments)
 	config.app.filesystem_roots = arguments.filesystem_roots;
 	config.app.filesystem_write_root = arguments.filesystem_write_root;
 	config.app.property_file = arguments.property_file;
+	if (arguments.has_random_seed)
+	{
+		config.app.random_seed = arguments.random_seed;
+	}
 	config.instance_executable = arguments.instance_exec;
 	config.instances = arguments.instances;
 	config.init_timeout_us = arguments.init_timeout_us;

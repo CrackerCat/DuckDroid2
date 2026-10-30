@@ -26,6 +26,9 @@ struct WorkerSpec
 	std::string filesystem_write_root;
 	// build.prop-format property overrides, layered over the derived identity.
 	std::string property_file;
+	// Pins the instance entropy stream for reproducible replays.
+	bool has_random_seed = false;
+	uint64_t random_seed = 0;
 	uint32_t workers = 1;
 	uint32_t instances = 1;
 	uint64_t init_timeout_us = 120ull * 1000 * 1000;

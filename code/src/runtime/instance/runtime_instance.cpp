@@ -324,6 +324,12 @@ Result<std::unique_ptr<RuntimeInstance> > RuntimeInstance::create(const RuntimeC
 	}
 	impl->jni = std::move(jni_state).value();
 
+	// One stream feeds getrandom(2), /dev/{u,}random and AT_RANDOM. A seed
+	// pins all three, which is what a byte-reproducible replay needs.
+	impl->random = config.random_seed.has_value() ?
+		std::make_unique<RandomSource>(config.random_seed.value()) :
+		std::make_unique<RandomSource>();
+
 	loader::BionicGlobalsConfig globals_config;
 	globals_config.pid = config.pid;
 	globals_config.uid = config.device.uid;
@@ -332,6 +338,7 @@ Result<std::unique_ptr<RuntimeInstance> > RuntimeInstance::create(const RuntimeC
 	globals_config.hwcap = config.device.hwcap;
 	globals_config.hwcap2 = config.device.hwcap2;
 	globals_config.environment = { "ANDROID_ROOT=/system", "ANDROID_DATA=/data" };
+	globals_config.random = impl->random.get();
 	impl->bionic_globals =
 		std::make_unique<loader::BionicGlobals>(impl->memory, std::move(globals_config));
 	if (auto initialized = impl->bionic_globals->initialize(); !initialized.ok()) {
@@ -365,7 +372,6 @@ Result<std::unique_ptr<RuntimeInstance> > RuntimeInstance::create(const RuntimeC
 		return property_files.error();
 	}
 	impl->properties = std::move(property_files).value();
-	impl->random = std::make_unique<RandomSource>();
 	impl->dev = std::make_unique<vfs::DevFileSystem>(*impl->random);
 
 	vfs::VfsConfig vfs_config;

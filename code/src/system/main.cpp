@@ -29,7 +29,7 @@ void Usage()
 		"                            [,library-path=P1:P2]\n"
 		"                            [,filesystem-root=P1:P2]\n"
 		"                            [,filesystem-write-root=DIR]\n"
-		"                            [,property-file=PATH]\n"
+		"                            [,property-file=PATH][,random-seed=N]\n"
 		"                            [,init-timeout-us=N][,invoke-timeout-us=N]\n"
 		"                            [,backoff-ms=N][,max-requests=N]\n"
 		"                      [--wall-time-ns N] [--monotonic-time-ns N]\n"
@@ -129,6 +129,17 @@ bool ParseApp(const std::string &spec, duckemu::system::WorkerSpec *worker, std:
 		else if (key == "property-file")
 		{
 			worker->property_file = value;
+		}
+		else if (key == "random-seed")
+		{
+			uint64_t number = 0;
+			if (!ParseU64(value, &number))
+			{
+				*error = "app 'random-seed' must be a number";
+				return false;
+			}
+			worker->has_random_seed = true;
+			worker->random_seed = number;
 		}
 		else if (key == "instances")
 		{

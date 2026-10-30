@@ -67,6 +67,10 @@ struct RuntimeConfig
 	// layers over them, in file order. Empty keeps the derived set only.
 	std::string property_file;
 
+	// Pins the instance entropy stream (getrandom, /dev/{u,}random and
+	// AT_RANDOM), making a replay byte-reproducible. Null keeps host entropy.
+	std::optional<uint64_t> random_seed;
+
 	// Re-enables the M4 fixture virtual table (libc/liblog stubs). Off in
 	// production; 04_so_load turns it on to keep testing the thunk path.
 	bool enable_test_import_stubs = false;

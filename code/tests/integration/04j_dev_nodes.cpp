@@ -24,7 +24,6 @@ namespace
 constexpr uint32_t kPid = 1000;
 constexpr uint32_t kTid = 1;
 constexpr uint64_t kDataSize = 0x1000;
-constexpr uint64_t kStatBytes = 128;
 
 constexpr size_t kStatModeOffset = 16;
 constexpr size_t kStatUidOffset = 24;
@@ -36,7 +35,6 @@ constexpr uint32_t kSIfchr = 0020000;
 constexpr uint32_t kSIfdir = 0040000;
 
 constexpr int kORdOnly = 0;
-constexpr int kOWrOnly = 1;
 constexpr int kORdwr = 2;
 constexpr int kFok = 0;
 constexpr int kRok = 4;

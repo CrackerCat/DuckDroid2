@@ -198,6 +198,11 @@ bool WorkerPool::Impl::Spawn(Slot &slot, std::string *error)
 		arguments.push_back("--property-file");
 		arguments.push_back(spec.property_file);
 	}
+	if (spec.has_random_seed)
+	{
+		arguments.push_back("--random-seed");
+		arguments.push_back(std::to_string(spec.random_seed));
+	}
 	arguments.push_back("--instances");
 	arguments.push_back(std::to_string(spec.instances));
 	arguments.push_back("--init-timeout-us");

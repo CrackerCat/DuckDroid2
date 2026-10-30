@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -28,6 +29,7 @@ constexpr uint64_t kAtEmptyPath = 0x1000;
 // arm64 kernel `struct stat` (arch/arm64/include/uapi/asm/stat.h). bionic
 // passes the kernel buffer straight through, so fs_handlers writes this layout.
 constexpr size_t kStatSize = 128;
+constexpr int64_t kAtFdcwd = -100;
 constexpr size_t kStatModeOffset = 16;
 constexpr size_t kStatSizeOffset = 48;
 constexpr size_t kStatBlocksOffset = 64;
@@ -38,6 +40,20 @@ constexpr size_t kStatNlinkOffset = 20;
 constexpr size_t kStatUidOffset = 24;
 constexpr size_t kStatGidOffset = 28;
 constexpr size_t kStatRdevOffset = 32;
+
+// arm64 `struct statfs` (asm-generic): eleven 64-bit words plus fsid.
+constexpr size_t kStatfsSize = 120;
+constexpr size_t kStatfsTypeOffset = 0;
+constexpr size_t kStatfsBlockSizeOffset = 8;
+constexpr size_t kStatfsBlocksOffset = 16;
+constexpr size_t kStatfsBlocksFreeOffset = 24;
+constexpr size_t kStatfsBlocksAvailableOffset = 32;
+constexpr size_t kStatfsFilesOffset = 40;
+constexpr size_t kStatfsFilesFreeOffset = 48;
+constexpr size_t kStatfsFsidOffset = 56;
+constexpr size_t kStatfsNameLengthOffset = 64;
+constexpr size_t kStatfsFragmentSizeOffset = 72;
+constexpr size_t kStatfsFlagsOffset = 80;
 
 constexpr uint32_t kModeCharacter = 0020000;
 
@@ -106,12 +122,14 @@ int64_t readPath(SyscallContext &ctx, uint64_t address, std::string &path)
 	return kError(kEnametoolong);
 }
 
-void putU32(std::array<uint8_t, kStatSize> &bytes, size_t offset, uint32_t value)
+template <size_t Size>
+void putU32(std::array<uint8_t, Size> &bytes, size_t offset, uint32_t value)
 {
 	std::memcpy(bytes.data() + offset, &value, sizeof(value));
 }
 
-void putU64(std::array<uint8_t, kStatSize> &bytes, size_t offset, uint64_t value)
+template <size_t Size>
+void putU64(std::array<uint8_t, Size> &bytes, size_t offset, uint64_t value)
 {
 	std::memcpy(bytes.data() + offset, &value, sizeof(value));
 }
@@ -138,6 +156,85 @@ int64_t writeStat(SyscallContext &ctx, uint64_t address, const vfs::FileStat &st
 
 	auto written = ctx.memory.write(GuestVA{ address }, bytes.data(), bytes.size());
 	return written.ok() ? 0 : kError(kEfault);
+}
+
+int64_t writeStatfs(SyscallContext &ctx, uint64_t address, const vfs::FileSystemStats &stats)
+{
+	std::array<uint8_t, kStatfsSize> bytes{};
+	putU64(bytes, kStatfsTypeOffset, stats.type);
+	putU64(bytes, kStatfsBlockSizeOffset, stats.block_size);
+	putU64(bytes, kStatfsBlocksOffset, stats.blocks);
+	putU64(bytes, kStatfsBlocksFreeOffset, stats.blocks_free);
+	putU64(bytes, kStatfsBlocksAvailableOffset, stats.blocks_available);
+	putU64(bytes, kStatfsFilesOffset, stats.files);
+	putU64(bytes, kStatfsFilesFreeOffset, stats.files_free);
+	putU32(bytes, kStatfsFsidOffset, stats.fsid[0]);
+	putU32(bytes, kStatfsFsidOffset + 4, stats.fsid[1]);
+	putU64(bytes, kStatfsNameLengthOffset, stats.name_length);
+	putU64(bytes, kStatfsFragmentSizeOffset, stats.fragment_size);
+	putU64(bytes, kStatfsFlagsOffset, stats.flags);
+
+	auto written = ctx.memory.write(GuestVA{ address }, bytes.data(), bytes.size());
+	return written.ok() ? 0 : kError(kEfault);
+}
+
+int64_t sysStatfs(SyscallContext &ctx)
+{
+	std::string path;
+	const int64_t path_error = readPath(ctx, ctx.args[0], path);
+	if (path_error != 0) {
+		return path_error;
+	}
+	auto stats = ctx.vfs.statfs(kAtFdcwd, path);
+	if (!stats.ok()) {
+		return toErrno(stats.error());
+	}
+	return writeStatfs(ctx, ctx.args[1], stats.value());
+}
+
+int64_t sysFstatfs(SyscallContext &ctx)
+{
+	const uint64_t fd = ctx.args[0];
+	vfs::FileSystemStats stats;
+	if (fd <= 2) {
+		// The standard streams are the host's; describe them as a tmpfs.
+		stats = ctx.vfs.fileSystemForPath("/dev/stdout");
+	}
+	else {
+		auto result = ctx.vfs.statfsFd(fd);
+		if (!result.ok()) {
+			return toErrno(result.error());
+		}
+		stats = result.value();
+	}
+	return writeStatfs(ctx, ctx.args[1], stats);
+}
+
+int64_t sysReadlinkat(SyscallContext &ctx)
+{
+	const uint64_t dirfd = ctx.args[0];
+	std::string path;
+	const int64_t path_error = readPath(ctx, ctx.args[1], path);
+	if (path_error != 0) {
+		return path_error;
+	}
+	const uint64_t buffer = ctx.args[2];
+	const uint64_t size = ctx.args[3];
+	if (size == 0) {
+		return kError(kEinval);
+	}
+
+	auto target = ctx.vfs.readLink(dirfd, path);
+	if (!target.ok()) {
+		return toErrno(target.error());
+	}
+	// readlink(2) copies without a terminator and truncates silently.
+	const uint64_t take = std::min<uint64_t>(size, target.value().size());
+	auto written = ctx.memory.write(GuestVA{ buffer }, target.value().data(), take);
+	if (!written.ok()) {
+		return kError(kEfault);
+	}
+	return static_cast<int64_t>(take);
 }
 
 int64_t sysWrite(SyscallContext &ctx)
@@ -537,6 +634,12 @@ std::optional<int64_t> handleFsSyscall(SyscallContext &ctx, uint32_t number)
 		return sysPread64(ctx);
 	case kSysLseek:
 		return sysLseek(ctx);
+	case kSysStatfs:
+		return sysStatfs(ctx);
+	case kSysFstatfs:
+		return sysFstatfs(ctx);
+	case kSysReadlinkat:
+		return sysReadlinkat(ctx);
 	case kSysFaccessat:
 	case kSysFaccessat2:
 		return sysFaccessat(ctx);

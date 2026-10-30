@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "runtime/vfs/virtual_file_system.hpp"
 
+#include <algorithm>
 #include <cerrno>
 #include <fcntl.h>
 #include <filesystem>
@@ -15,6 +16,7 @@
 #include <vector>
 
 #include "runtime/clock/runtime_clock.hpp"
+#include "runtime/device/device_profile.hpp"
 
 namespace duckemu::runtime::vfs
 {
@@ -555,6 +557,187 @@ Result<void> VirtualFileSystem::syncFd(uint64_t fd)
 		return Error{ ErrorCode::BadFileDescriptor, "fd is not open" };
 	}
 	return file->sync();
+}
+
+Result<std::string> VirtualFileSystem::readLink(uint64_t dirfd, std::string_view path)
+{
+	auto resolved = resolvePath(dirfd, path);
+	if (!resolved.ok())
+	{
+		return resolved.error();
+	}
+	const std::string &guest_path = resolved.value();
+
+	// /proc/self is itself a magic link; both spellings name this process.
+	const std::string self = "/proc/self";
+	const std::string by_pid = "/proc/" + std::to_string(config_.pid);
+	if (guest_path == self || guest_path == by_pid)
+	{
+		return std::to_string(config_.pid);
+	}
+
+	std::string_view rest;
+	if (guest_path.rfind(self + "/", 0) == 0)
+	{
+		rest = std::string_view(guest_path).substr(self.size() + 1);
+	}
+	else if (guest_path.rfind(by_pid + "/", 0) == 0)
+	{
+		rest = std::string_view(guest_path).substr(by_pid.size() + 1);
+	}
+
+	if (rest == "exe")
+	{
+		return config_.device != nullptr ? config_.device->executable_path :
+						   std::string("/system/bin/app_process64");
+	}
+	if (rest == "cwd" || rest == "root")
+	{
+		return std::string("/");
+	}
+	if (rest.rfind("fd/", 0) == 0)
+	{
+		const std::string_view number = rest.substr(3);
+		uint64_t fd = 0;
+		if (number.empty())
+		{
+			return Error{ ErrorCode::NotFound, "no such descriptor" };
+		}
+		for (char digit : number)
+		{
+			if (digit < '0' || digit > '9')
+			{
+				return Error{ ErrorCode::NotFound, "no such descriptor" };
+			}
+			fd = fd * 10 + static_cast<uint64_t>(digit - '0');
+		}
+		File *file = fds_.find(fd);
+		if (file == nullptr)
+		{
+			return Error{ ErrorCode::NotFound, guest_path };
+		}
+		return fileLink(*file);
+	}
+
+	// Everything that exists is a regular file or directory in this model:
+	// readlink(2) answers EINVAL for those.
+	auto status = stat(dirfd, path);
+	if (status.ok())
+	{
+		return Error{ ErrorCode::InvalidArgument, guest_path + " is not a symlink" };
+	}
+	return status.error();
+}
+
+Result<std::string> VirtualFileSystem::fileLink(File &file)
+{
+	auto status = file.stat();
+	const std::string inode =
+		status.ok() ? std::to_string(status.value().inode) : std::string("0");
+	switch (file.kind())
+	{
+	case FileKind::Pipe:
+		return "pipe:[" + inode + "]";
+	case FileKind::Event:
+		return std::string("anon_inode:[eventfd]");
+	case FileKind::Timer:
+		return std::string("anon_inode:[timerfd]");
+	case FileKind::Epoll:
+		return std::string("anon_inode:[eventpoll]");
+	default:
+		return std::string(file.path());
+	}
+}
+
+FileSystemStats VirtualFileSystem::fileSystemForPath(const std::string &guest_path) const
+{
+	// Kernel magic numbers (linux/magic.h).
+	constexpr uint64_t kF2fsMagic = 0xF2F52010;
+	constexpr uint64_t kErofsMagic = 0xE0F5E1E2;
+	constexpr uint64_t kTmpfsMagic = 0x01021994;
+	constexpr uint64_t kProcMagic = 0x9fa0;
+	constexpr uint64_t kBlockSize = 4096;
+
+	FileSystemStats stats;
+	stats.block_size = kBlockSize;
+	stats.fragment_size = kBlockSize;
+
+	const auto under = [](const std::string &path, std::string_view prefix) {
+		return path == prefix || path.rfind(std::string(prefix) + "/", 0) == 0;
+	};
+
+	if (under(guest_path, "/proc"))
+	{
+		stats.type = kProcMagic;
+		return stats;
+	}
+	if (under(guest_path, "/dev"))
+	{
+		stats.type = kTmpfsMagic;
+		stats.blocks = (256ull << 20) / kBlockSize;
+		stats.blocks_free = stats.blocks_available = stats.blocks;
+		stats.files = stats.blocks / 2;
+		stats.files_free = stats.files;
+		return stats;
+	}
+	if (under(guest_path, "/data"))
+	{
+		const uint64_t total = config_.device != nullptr ? config_.device->data_total_bytes :
+								   (64ull << 30);
+		const uint64_t available = config_.device != nullptr ? config_.device->data_free_bytes :
+								       (32ull << 30);
+		stats.type = config_.device != nullptr ? config_.device->data_file_system_type :
+							 kF2fsMagic;
+		stats.blocks = total / kBlockSize;
+		stats.blocks_free = std::min(available / kBlockSize, stats.blocks);
+		stats.blocks_available = stats.blocks_free;
+		stats.files = stats.blocks / 4;
+		stats.files_free = stats.files / 2;
+		return stats;
+	}
+
+	// The system images and anything else the host roots stand in for are
+	// read-only (erofs on Android 13+).
+	stats.type = kErofsMagic;
+	stats.blocks = (2ull << 30) / kBlockSize;
+	stats.flags = kMountReadOnly;
+	return stats;
+}
+
+Result<FileSystemStats> VirtualFileSystem::statfs(uint64_t dirfd, std::string_view path)
+{
+	auto resolved = resolvePath(dirfd, path);
+	if (!resolved.ok())
+	{
+		return resolved.error();
+	}
+	return fileSystemForPath(resolved.value());
+}
+
+Result<FileSystemStats> VirtualFileSystem::statfsFd(uint64_t fd)
+{
+	File *file = fds_.find(fd);
+	if (file == nullptr)
+	{
+		return Error{ ErrorCode::BadFileDescriptor, "fd is not open" };
+	}
+
+	constexpr uint64_t kPipefsMagic = 0x50495045;
+	constexpr uint64_t kAnonInodeMagic = 0x09041934;
+	switch (file->kind())
+	{
+	case FileKind::Pipe:
+	case FileKind::Event:
+	case FileKind::Timer:
+	case FileKind::Epoll:
+	{
+		FileSystemStats stats;
+		stats.type = file->kind() == FileKind::Pipe ? kPipefsMagic : kAnonInodeMagic;
+		return stats;
+	}
+	default:
+		return fileSystemForPath(std::string(file->path()));
+	}
 }
 
 Result<FileStat> VirtualFileSystem::stat(uint64_t dirfd, std::string_view path)

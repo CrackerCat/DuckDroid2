@@ -10,6 +10,7 @@
 
 namespace duckemu::runtime
 {
+class RandomSource;
 class RuntimeMemory;
 }
 
@@ -26,6 +27,9 @@ struct BionicGlobalsConfig
 	uint64_t hwcap2 = 0;
 	std::string progname = "duckemu";
 	std::vector<std::string> environment;
+	// AT_RANDOM (also the stack canary seed) comes from the instance stream, so
+	// a seeded replay sees identical canaries. Null keeps host entropy.
+	RandomSource *random = nullptr;
 };
 
 // The guest-side libc_shared_globals block that a real Android linker owns.
