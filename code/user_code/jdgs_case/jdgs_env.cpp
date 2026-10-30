@@ -9,6 +9,7 @@
 
 #include "common/id/ids.hpp"
 #include "jdgs_case/jdgs_cert.h"
+#include "runtime/jni/world/java_binder.hpp"
 #include "runtime/jni/world/java_world.hpp"
 #include "runtime/memory/address_space.hpp"
 
@@ -19,6 +20,7 @@ namespace
 
 using runtime::jni::ArrayElementKind;
 using runtime::jni::InvokeContext;
+using runtime::jni::JavaBinder;
 using runtime::jni::JavaWorld;
 using runtime::jni::ShimHandler;
 
@@ -161,121 +163,85 @@ Result<void> installEnvironment(JavaWorld &world)
 {
 	g_world = &world;
 
-	auto bridge = world.declareClass(kBridge, "");
-	if (!bridge.ok())
+	uint64_t bridge = 0;
+	uint64_t context = 0;
+	uint64_t package_manager = 0;
+	uint64_t package_info = 0;
+	uint64_t signing_info = 0;
+	uint64_t signature = 0;
+	uint64_t certificate_factory = 0;
+	uint64_t certificate = 0;
+	uint64_t byte_array_input_stream = 0;
+	uint64_t file = 0;
+	uint64_t integer = 0;
+
+	JavaBinder binder(world);
+
+	struct ClassSlot
 	{
-		return bridge.error();
-	}
-	auto context = world.declareClass(kContext, "");
-	if (!context.ok())
+		const char *descriptor;
+		uint64_t *slot;
+	};
+	const ClassSlot classes[] = {
+		{ kBridge, &bridge },
+		{ kContext, &context },
+		{ kPackageManager, &package_manager },
+		{ kPackageInfo, &package_info },
+		{ kSigningInfo, &signing_info },
+		{ kSignature, &signature },
+		{ kCertificateFactory, &certificate_factory },
+		{ kCertificate, &certificate },
+		{ kByteArrayInputStream, &byte_array_input_stream },
+		{ kFile, &file },
+		{ kInteger, &integer },
+	};
+	for (const ClassSlot &entry : classes)
 	{
-		return context.error();
-	}
-	auto package_manager = world.declareClass(kPackageManager, "");
-	if (!package_manager.ok())
-	{
-		return package_manager.error();
-	}
-	auto package_info = world.declareClass(kPackageInfo, "");
-	if (!package_info.ok())
-	{
-		return package_info.error();
-	}
-	auto signing_info = world.declareClass(kSigningInfo, "");
-	if (!signing_info.ok())
-	{
-		return signing_info.error();
-	}
-	auto signature = world.declareClass(kSignature, "");
-	if (!signature.ok())
-	{
-		return signature.error();
-	}
-	auto certificate_factory = world.declareClass(kCertificateFactory, "");
-	if (!certificate_factory.ok())
-	{
-		return certificate_factory.error();
-	}
-	auto certificate = world.declareClass(kCertificate, "");
-	if (!certificate.ok())
-	{
-		return certificate.error();
-	}
-	auto byte_array_input_stream = world.declareClass(kByteArrayInputStream, "");
-	if (!byte_array_input_stream.ok())
-	{
-		return byte_array_input_stream.error();
-	}
-	auto file = world.declareClass(kFile, "");
-	if (!file.ok())
-	{
-		return file.error();
-	}
-	auto integer = world.declareClass(kInteger, "");
-	if (!integer.ok())
-	{
-		return integer.error();
+		binder.declareClass(entry.descriptor, entry.slot);
 	}
 
 	// The object graph the native walks: Context -> PackageManager ->
 	// PackageInfo -> SigningInfo -> Signature[]. Values mirror the app process.
-	auto context_object = world.allocateObject(context.value());
-	if (!context_object.ok())
+	uint64_t context_object = 0;
+	uint64_t package_manager_object = 0;
+	uint64_t package_info_object = 0;
+	uint64_t signing_info_object = 0;
+	uint64_t signature_object = 0;
+	uint64_t certificate_factory_object = 0;
+	uint64_t certificate_object = 0;
+	uint64_t files_dir_object = 0;
+
+	struct ObjectSlot
 	{
-		return context_object.error();
-	}
-	auto package_manager_object = world.allocateObject(package_manager.value());
-	if (!package_manager_object.ok())
+		uint64_t klass;
+		uint64_t *slot;
+	};
+	const ObjectSlot objects[] = {
+		{ context, &context_object },
+		{ package_manager, &package_manager_object },
+		{ package_info, &package_info_object },
+		{ signing_info, &signing_info_object },
+		{ signature, &signature_object },
+		{ certificate_factory, &certificate_factory_object },
+		{ certificate, &certificate_object },
+		{ file, &files_dir_object },
+	};
+	for (const ObjectSlot &entry : objects)
 	{
-		return package_manager_object.error();
+		binder.allocateObject(entry.klass, entry.slot);
 	}
-	auto package_info_object = world.allocateObject(package_info.value());
-	if (!package_info_object.ok())
-	{
-		return package_info_object.error();
-	}
-	auto signing_info_object = world.allocateObject(signing_info.value());
-	if (!signing_info_object.ok())
-	{
-		return signing_info_object.error();
-	}
-	auto signature_object = world.allocateObject(signature.value());
-	if (!signature_object.ok())
-	{
-		return signature_object.error();
-	}
-	auto certificate_factory_object = world.allocateObject(certificate_factory.value());
-	if (!certificate_factory_object.ok())
-	{
-		return certificate_factory_object.error();
-	}
-	auto certificate_object = world.allocateObject(certificate.value());
-	if (!certificate_object.ok())
-	{
-		return certificate_object.error();
-	}
-	auto files_dir_object = world.allocateObject(file.value());
-	if (!files_dir_object.ok())
-	{
-		return files_dir_object.error();
-	}
-	auto signature_array = world.newArray(
-		ArrayElementKind::Object, 1, signature.value(), signature_object.value());
-	if (!signature_array.ok())
-	{
-		return signature_array.error();
-	}
+
+	uint64_t signature_array = 0;
+	binder.newArray(
+		ArrayElementKind::Object, 1, signature, signature_object, &signature_array);
 
 	// java.lang.Integer carries the init/errno status in an instance field, so
 	// main(103) can answer an Integer object instead of a string.
-	auto integer_value_field = world.declareField(integer.value(), "value", "I", false);
-	if (!integer_value_field.ok())
-	{
-		return integer_value_field.error();
-	}
-	g_integer_value_field = integer_value_field.value();
-	auto integer_init = world.declareMethod(integer.value(), "<init>", "(I)V", false,
-		[value_field = integer_value_field.value()](JavaWorld &java,
+	uint64_t integer_value_field = 0;
+	binder.declareField(integer, "value", "I", false, &integer_value_field);
+	g_integer_value_field = integer_value_field;
+	binder.declareMethod(integer, "<init>", "(I)V", false,
+		[value_field = integer_value_field](JavaWorld &java,
 			InvokeContext &call) -> Result<uint64_t> {
 			if (call.args.size() != 1)
 			{
@@ -290,92 +256,40 @@ Result<void> installEnvironment(JavaWorld &world)
 			}
 			return uint64_t{ 0 };
 		});
-	if (!integer_init.ok())
-	{
-		return integer_init.error();
-	}
 
 	// PackageInfo: versionName, versionCode and the signingInfo the native
 	// reads back. GET_SIGNING_CERTIFICATES is the flag value the app passes.
-	auto version_name_field =
-		world.declareField(package_info.value(), "versionName", "Ljava/lang/String;", false);
-	if (!version_name_field.ok())
-	{
-		return version_name_field.error();
-	}
-	auto version_code_field = world.declareField(package_info.value(), "versionCode", "I", false);
-	if (!version_code_field.ok())
-	{
-		return version_code_field.error();
-	}
-	auto signing_info_field = world.declareField(
-		package_info.value(), "signingInfo", "Landroid/content/pm/SigningInfo;", false);
-	if (!signing_info_field.ok())
-	{
-		return signing_info_field.error();
-	}
-	// Legacy signature list: the native still reads it when it walks the
-	// PackageInfo by hand.
-	auto signatures_field = world.declareField(
-		package_info.value(), "signatures", "[Landroid/content/pm/Signature;", false);
-	if (!signatures_field.ok())
-	{
-		return signatures_field.error();
-	}
-	auto signing_flags_field = world.declareField(
-		package_manager.value(), "GET_SIGNING_CERTIFICATES", "I", true);
-	if (!signing_flags_field.ok())
-	{
-		return signing_flags_field.error();
-	}
+	uint64_t version_name_field = 0;
+	uint64_t version_code_field = 0;
+	uint64_t signing_info_field = 0;
+	uint64_t signatures_field = 0;
+	uint64_t signing_flags_field = 0;
+	binder.declareField(package_info, "versionName", "Ljava/lang/String;", false,
+			&version_name_field)
+		.declareField(package_info, "versionCode", "I", false, &version_code_field)
+		.declareField(package_info, "signingInfo", "Landroid/content/pm/SigningInfo;", false,
+			&signing_info_field)
+		// Legacy signature list: the native still reads it when it walks the
+		// PackageInfo by hand.
+		.declareField(package_info, "signatures", "[Landroid/content/pm/Signature;", false,
+			&signatures_field)
+		.declareField(package_manager, "GET_SIGNING_CERTIFICATES", "I", true,
+			&signing_flags_field);
 
-	auto version_name = makeString(world, kVersionName);
-	if (!version_name.ok())
-	{
-		return version_name.error();
-	}
-	auto filled = world.writeInstanceField(
-		package_info_object.value(), version_name_field.value(), version_name.value());
-	if (!filled.ok())
-	{
-		return filled.error();
-	}
-	filled = world.writeInstanceField(
-		package_info_object.value(), version_code_field.value(), kVersionCode);
-	if (!filled.ok())
-	{
-		return filled.error();
-	}
-	filled = world.writeInstanceField(package_info_object.value(),
-		signing_info_field.value(),
-		signing_info_object.value());
-	if (!filled.ok())
-	{
-		return filled.error();
-	}
-	filled = world.writeInstanceField(
-		package_info_object.value(), signatures_field.value(), signature_array.value());
-	if (!filled.ok())
-	{
-		return filled.error();
-	}
-	filled = world.writeStaticField(
-		package_manager.value(), signing_flags_field.value(), kGetSigningCertificates);
-	if (!filled.ok())
-	{
-		return filled.error();
-	}
+	uint64_t version_name = 0;
+	binder.newString(kVersionName, &version_name)
+		.writeInstanceField(package_info_object, version_name_field, version_name)
+		.writeInstanceField(package_info_object, version_code_field, kVersionCode)
+		.writeInstanceField(package_info_object, signing_info_field, signing_info_object)
+		.writeInstanceField(package_info_object, signatures_field, signature_array)
+		.writeStaticField(package_manager, signing_flags_field, kGetSigningCertificates);
 
 	// Bridge: main is the registered native; the rest are the static host
 	// methods the native calls back into.
-	auto main = world.declareMethod(bridge.value(), "main", kMainSignature, true, {});
-	if (!main.ok())
-	{
-		return main.error();
-	}
-	auto bridge_methods = {
+	binder.declareMethod(bridge, "main", kMainSignature, true, {});
+	const auto bridge_methods = {
 		std::make_pair("getAppContext",
-			std::make_pair("()Landroid/content/Context;", returnObject(context_object.value()))),
+			std::make_pair("()Landroid/content/Context;", returnObject(context_object))),
 		std::make_pair("getAppKey",
 			std::make_pair("()Ljava/lang/String;", returnString(kAppKey))),
 		std::make_pair("getJDGVN",
@@ -389,112 +303,49 @@ Result<void> installEnvironment(JavaWorld &world)
 	};
 	for (const auto &method : bridge_methods)
 	{
-		auto declared = world.declareMethod(bridge.value(),
-			method.first,
-			method.second.first,
-			true,
-			method.second.second);
-		if (!declared.ok())
-		{
-			return declared.error();
-		}
+		binder.declareMethod(
+			bridge, method.first, method.second.first, true, method.second.second);
 	}
 
-	auto context_methods = {
+	const auto context_methods = {
 		std::make_pair("getPackageName",
 			std::make_pair("()Ljava/lang/String;", returnString(kPackageName))),
 		std::make_pair("getPackageCodePath",
 			std::make_pair("()Ljava/lang/String;", returnString(kApkPath))),
 		std::make_pair("getPackageManager",
 			std::make_pair("()Landroid/content/pm/PackageManager;",
-				returnObject(package_manager_object.value()))),
+				returnObject(package_manager_object))),
 		std::make_pair("getFilesDir",
-			std::make_pair("()Ljava/io/File;", returnObject(files_dir_object.value()))),
+			std::make_pair("()Ljava/io/File;", returnObject(files_dir_object))),
 	};
 	for (const auto &method : context_methods)
 	{
-		auto declared = world.declareMethod(
-			context.value(), method.first, method.second.first, false, method.second.second);
-		if (!declared.ok())
-		{
-			return declared.error();
-		}
+		binder.declareMethod(
+			context, method.first, method.second.first, false, method.second.second);
 	}
 
-	auto package_manager_get_package_info = world.declareMethod(package_manager.value(),
-		"getPackageInfo",
-		"(Ljava/lang/String;I)Landroid/content/pm/PackageInfo;",
-		false,
-		returnObject(package_info_object.value()));
-	if (!package_manager_get_package_info.ok())
-	{
-		return package_manager_get_package_info.error();
-	}
-	auto get_signing_info = world.declareMethod(signing_info.value(),
-		"getApkContentsSigners",
-		"()[Landroid/content/pm/Signature;",
-		false,
-		returnObject(signature_array.value()));
-	if (!get_signing_info.ok())
-	{
-		return get_signing_info.error();
-	}
-	auto signature_to_byte_array = world.declareMethod(signature.value(),
-		"toByteArray",
-		"()[B",
-		false,
-		returnCertificateBytes());
-	if (!signature_to_byte_array.ok())
-	{
-		return signature_to_byte_array.error();
-	}
-	auto certificate_factory_get_instance = world.declareMethod(certificate_factory.value(),
-		"getInstance",
-		"(Ljava/lang/String;)Ljava/security/cert/CertificateFactory;",
-		true,
-		returnObject(certificate_factory_object.value()));
-	if (!certificate_factory_get_instance.ok())
-	{
-		return certificate_factory_get_instance.error();
-	}
-	auto generate_certificate = world.declareMethod(certificate_factory.value(),
-		"generateCertificate",
-		"(Ljava/io/InputStream;)Ljava/security/cert/Certificate;",
-		false,
-		returnObject(certificate_object.value()));
-	if (!generate_certificate.ok())
-	{
-		return generate_certificate.error();
-	}
-	auto certificate_get_encoded = world.declareMethod(certificate.value(),
-		"getEncoded",
-		"()[B",
-		false,
-		returnCertificateBytes());
-	if (!certificate_get_encoded.ok())
-	{
-		return certificate_get_encoded.error();
-	}
-	// The native only checks that a stream exists; CertificateFactory answers
-	// from the embedded certificate, so the stream contents are unused.
-	auto stream_init = world.declareMethod(byte_array_input_stream.value(), "<init>", "([B)V",
-		false,
-		[](JavaWorld &, InvokeContext &) -> Result<uint64_t> { return uint64_t{ 0 }; });
-	if (!stream_init.ok())
-	{
-		return stream_init.error();
-	}
-	auto file_get_absolute_path = world.declareMethod(file.value(),
-		"getAbsolutePath",
-		"()Ljava/lang/String;",
-		false,
-		returnString(kFilesDirPath));
-	if (!file_get_absolute_path.ok())
-	{
-		return file_get_absolute_path.error();
-	}
+	binder.declareMethod(package_manager, "getPackageInfo",
+			"(Ljava/lang/String;I)Landroid/content/pm/PackageInfo;", false,
+			returnObject(package_info_object))
+		.declareMethod(signing_info, "getApkContentsSigners",
+			"()[Landroid/content/pm/Signature;", false, returnObject(signature_array))
+		.declareMethod(signature, "toByteArray", "()[B", false, returnCertificateBytes())
+		.declareMethod(certificate_factory, "getInstance",
+			"(Ljava/lang/String;)Ljava/security/cert/CertificateFactory;", true,
+			returnObject(certificate_factory_object))
+		.declareMethod(certificate_factory, "generateCertificate",
+			"(Ljava/io/InputStream;)Ljava/security/cert/Certificate;", false,
+			returnObject(certificate_object))
+		.declareMethod(certificate, "getEncoded", "()[B", false, returnCertificateBytes())
+		// The native only checks that a stream exists; CertificateFactory
+		// answers from the embedded certificate, so the stream contents are
+		// unused.
+		.declareMethod(byte_array_input_stream, "<init>", "([B)V", false,
+			[](JavaWorld &, InvokeContext &) -> Result<uint64_t> { return uint64_t{ 0 }; })
+		.declareMethod(file, "getAbsolutePath", "()Ljava/lang/String;", false,
+			returnString(kFilesDirPath));
 
-	return {};
+	return std::move(binder).done();
 }
 
 Result<uint64_t> buildInitArguments(std::string_view phase, bool with_elapsed)

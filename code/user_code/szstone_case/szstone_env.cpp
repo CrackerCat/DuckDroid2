@@ -13,6 +13,7 @@
 #include "common/error/error_code.hpp"
 #include "common/id/ids.hpp"
 #include "runtime/instance/runtime_instance.hpp"
+#include "runtime/jni/world/java_binder.hpp"
 #include "runtime/jni/world/java_world.hpp"
 #include "runtime/memory/address_space.hpp"
 #include "szstone_case/szstone_cert.h"
@@ -24,6 +25,7 @@ namespace
 
 using runtime::jni::ArrayElementKind;
 using runtime::jni::InvokeContext;
+using runtime::jni::JavaBinder;
 using runtime::jni::JavaWorld;
 using runtime::jni::ShimHandler;
 
@@ -74,32 +76,6 @@ const char *EnvOr(const char *name, const char *fallback)
 {
 	const char *value = std::getenv(name);
 	return value != nullptr ? value : fallback;
-}
-
-Result<void> declareClass(JavaWorld &world, const char *descriptor, uint64_t *out)
-{
-	auto declared = world.declareClass(descriptor, "");
-	if (!declared.ok())
-	{
-		return declared.error();
-	}
-	*out = declared.value();
-	return {};
-}
-
-Result<void> declareMethod(JavaWorld &world,
-	uint64_t klass,
-	const char *name,
-	const char *signature,
-	bool is_static,
-	ShimHandler shim)
-{
-	auto declared = world.declareMethod(klass, name, signature, is_static, std::move(shim));
-	if (!declared.ok())
-	{
-		return declared.error();
-	}
-	return {};
 }
 
 bool debugEnabled()
@@ -251,13 +227,11 @@ Result<std::vector<uint8_t> > invokeLf(runtime::RuntimeInstance &instance,
 Result<void> installEnvironment(JavaWorld &world)
 {
 	g_world = &world;
+	JavaBinder binder(world);
 
 	// -- target .so -------------------------------------------------------
-	auto szsdk = world.declareClass(kSzSdkClass, "");
-	if (!szsdk.ok())
-	{
-		return szsdk.error();
-	}
+	uint64_t szsdk = 0;
+	binder.declareClass(kSzSdkClass, &szsdk);
 	// RegisterNatives carries no staticness, so every entry libszstone
 	// registers must already be declared here and match its Java signature.
 	struct NativeMethod
@@ -279,12 +253,8 @@ Result<void> installEnvironment(JavaWorld &world)
 	};
 	for (const NativeMethod &method : kNativeMethods)
 	{
-		auto declared = world.declareMethod(
-			szsdk.value(), method.name, method.signature, /*is_static=*/true, {});
-		if (!declared.ok())
-		{
-			return declared.error();
-		}
+		binder.declareMethod(
+			szsdk, method.name, method.signature, /*is_static=*/true, {});
 	}
 
 	// -- Android object graph ---------------------------------------------
@@ -321,10 +291,7 @@ Result<void> installEnvironment(JavaWorld &world)
 	};
 	for (const ClassSlot &entry : classes)
 	{
-		if (auto result = declareClass(world, entry.descriptor, entry.slot); !result.ok())
-		{
-			return result;
-		}
+		binder.declareClass(entry.descriptor, entry.slot);
 	}
 
 	// The object instances the native walks. They carry no state the shims
@@ -348,97 +315,43 @@ Result<void> installEnvironment(JavaWorld &world)
 	};
 	for (const Instance &instance : instances)
 	{
-		auto object = world.allocateObject(instance.klass);
-		if (!object.ok())
-		{
-			return object.error();
-		}
-		*instance.slot = object.value();
+		binder.allocateObject(instance.klass, instance.slot);
 	}
 
-	auto signature_array =
-		world.newArray(ArrayElementKind::Object, 1, signature_class, g_signature);
-	if (!signature_array.ok())
-	{
-		return signature_array.error();
-	}
-	g_signature_array = signature_array.value();
-	auto certificate_bytes = makeByteArray(world, kSigningCertificate, kSigningCertificateSize);
-	if (!certificate_bytes.ok())
-	{
-		return certificate_bytes.error();
-	}
-	g_certificate_bytes = certificate_bytes.value();
-
-	// PackageInfo.signatures is the only field lf() reads.
-	auto signatures_field =
-		world.declareField(package_info_class, "signatures", "[Landroid/content/pm/Signature;", false);
-	if (!signatures_field.ok())
-	{
-		return signatures_field.error();
-	}
-	if (auto written = world.writeInstanceField(
-			g_package_info, signatures_field.value(), g_signature_array);
-		!written.ok())
-	{
-		return written.error();
-	}
+	uint64_t signatures_field = 0;
+	binder.newArray(ArrayElementKind::Object, 1, signature_class, g_signature, &g_signature_array)
+		.assign(makeByteArray(world, kSigningCertificate, kSigningCertificateSize),
+			&g_certificate_bytes)
+		// PackageInfo.signatures is the only field lf() reads.
+		.declareField(package_info_class, "signatures",
+			"[Landroid/content/pm/Signature;", false, &signatures_field)
+		.writeInstanceField(g_package_info, signatures_field, g_signature_array);
 
 	// -- ActivityThread / Application / Context ---------------------------
-	if (auto result = declareMethod(world, activity_thread_class, "currentActivityThread",
-			"()Landroid/app/ActivityThread;", true, returnObject("currentActivityThread", g_activity_thread));
-		!result.ok())
-	{
-		return result;
-	}
-	if (auto result = declareMethod(world, activity_thread_class, "getApplication",
-			"()Landroid/app/Application;", false, returnObject("getApplication", g_application));
-		!result.ok())
-	{
-		return result;
-	}
-	if (auto result = declareMethod(world, application_class, "getPackageName",
-			"()Ljava/lang/String;", false, returnString(kPackageName));
-		!result.ok())
-	{
-		return result;
-	}
-	if (auto result = declareMethod(world, application_class, "getPackageCodePath",
-			"()Ljava/lang/String;", false, returnString(EnvOr("SZSTONE_APK_PATH", kCodePath)));
-		!result.ok())
-	{
-		return result;
-	}
-	if (auto result = declareMethod(world, application_class, "getPackageManager",
-			"()Landroid/content/pm/PackageManager;", false, returnObject("getPackageManager", g_package_manager));
-		!result.ok())
-	{
-		return result;
-	}
-	if (auto result = declareMethod(world, application_class, "getContentResolver",
-			"()Landroid/content/ContentResolver;", false, returnObject("getContentResolver", g_content_resolver));
-		!result.ok())
-	{
-		return result;
-	}
-
-	// -- PackageManager ----------------------------------------------------
-	if (auto result = declareMethod(world, package_manager_class, "getPackageInfo",
+	binder.declareMethod(activity_thread_class, "currentActivityThread",
+			"()Landroid/app/ActivityThread;", true,
+			returnObject("currentActivityThread", g_activity_thread))
+		.declareMethod(activity_thread_class, "getApplication",
+			"()Landroid/app/Application;", false,
+			returnObject("getApplication", g_application))
+		.declareMethod(application_class, "getPackageName", "()Ljava/lang/String;", false,
+			returnString(kPackageName))
+		.declareMethod(application_class, "getPackageCodePath", "()Ljava/lang/String;", false,
+			returnString(EnvOr("SZSTONE_APK_PATH", kCodePath)))
+		.declareMethod(application_class, "getPackageManager",
+			"()Landroid/content/pm/PackageManager;", false,
+			returnObject("getPackageManager", g_package_manager))
+		.declareMethod(application_class, "getContentResolver",
+			"()Landroid/content/ContentResolver;", false,
+			returnObject("getContentResolver", g_content_resolver))
+		// -- PackageManager --------------------------------------------
+		.declareMethod(package_manager_class, "getPackageInfo",
 			"(Ljava/lang/String;I)Landroid/content/pm/PackageInfo;", false,
-			returnObject("getPackageInfo", g_package_info));
-		!result.ok())
-	{
-		return result;
-	}
-
-	// -- Signature ---------------------------------------------------------
-	if (auto result = declareMethod(world, signature_class, "toCharsString",
-			"()Ljava/lang/String;", false, returnString(certHexString()));
-		!result.ok())
-	{
-		return result;
-	}
-	if (auto result = declareMethod(world, signature_class, "toByteArray", "()[B", false,
+			returnObject("getPackageInfo", g_package_info))
+		// -- Signature -------------------------------------------------
+		.declareMethod(signature_class, "toCharsString", "()Ljava/lang/String;", false,
+			returnString(certHexString()))
+		.declareMethod(signature_class, "toByteArray", "()[B", false,
 			[](JavaWorld &java, InvokeContext &) -> Result<uint64_t> {
 				if (debugEnabled())
 				{
@@ -447,14 +360,9 @@ Result<void> installEnvironment(JavaWorld &world)
 				}
 				return makeByteArray(
 					java, kSigningCertificate, kSigningCertificateSize);
-			});
-		!result.ok())
-	{
-		return result;
-	}
-
-	// -- Settings.Secure ---------------------------------------------------
-	if (auto result = declareMethod(world, settings_secure_class, "getString",
+			})
+		// -- Settings.Secure -------------------------------------------
+		.declareMethod(settings_secure_class, "getString",
 			"(Landroid/content/ContentResolver;Ljava/lang/String;)Ljava/lang/String;", true,
 			[](JavaWorld &java, InvokeContext &call) -> Result<uint64_t> {
 				if (call.args.size() != 2)
@@ -483,73 +391,47 @@ Result<void> installEnvironment(JavaWorld &world)
 						"SZSTONE_BT_ADDRESS", kBluetoothAddress));
 				}
 				return uint64_t{ 0 };
-			});
-		!result.ok())
-	{
-		return result;
-	}
-
-	// -- Certificate chain -------------------------------------------------
-	if (auto result = declareMethod(world, certificate_factory_class, "getInstance",
+			})
+		// -- Certificate chain -----------------------------------------
+		.declareMethod(certificate_factory_class, "getInstance",
 			"(Ljava/lang/String;)Ljava/security/cert/CertificateFactory;", true,
-			returnObject("CertificateFactory.getInstance", g_certificate_factory));
-		!result.ok())
-	{
-		return result;
-	}
-	if (auto result = declareMethod(world, certificate_factory_class, "generateCertificate",
+			returnObject("CertificateFactory.getInstance", g_certificate_factory))
+		.declareMethod(certificate_factory_class, "generateCertificate",
 			"(Ljava/io/InputStream;)Ljava/security/cert/Certificate;", false,
-			returnObject("generateCertificate", g_x509_certificate));
-		!result.ok())
-	{
-		return result;
-	}
-	if (auto result = declareMethod(world, byte_stream_class, "<init>", "([B)V", false,
+			returnObject("generateCertificate", g_x509_certificate))
+		.declareMethod(byte_stream_class, "<init>", "([B)V", false,
 			[](JavaWorld &, InvokeContext &) -> Result<uint64_t> {
 				if (debugEnabled())
 				{
 					std::fprintf(stderr, "szstone shim ByteArrayInputStream.<init>\n");
 				}
 				return uint64_t{ 0 };
+			})
+		.declareMethod(x509_class, "getSubjectX500Principal",
+			"()Ljavax/security/auth/x500/X500Principal;", false,
+			returnObject("getSubjectX500Principal", g_x500_principal))
+		.declareMethod(x509_class, "getSerialNumber", "()Ljava/math/BigInteger;", false,
+			returnObject("getSerialNumber", g_big_integer))
+		.declareMethod(x500_class, "getName", "()Ljava/lang/String;", false,
+			returnString(kSubjectName))
+		.declareMethod(big_integer_class, "toString", "(I)Ljava/lang/String;", false,
+			[](JavaWorld &java, InvokeContext &call) -> Result<uint64_t> {
+				// The native asks for radix 16; the captured certificate serial is
+				// all this object can ever answer.
+				if (debugEnabled())
+				{
+					std::fprintf(stderr, "szstone shim BigInteger.toString(%llu)\n",
+						static_cast<unsigned long long>(call.args.empty() ? 0 : call.args[0]));
+				}
+				if (call.args.size() != 1 || call.args[0] != 16)
+				{
+					return Error{ ErrorCode::Unsupported,
+						"BigInteger.toString: only radix 16 is declared" };
+				}
+				return java.newString(kSerialHex);
 			});
-		!result.ok())
-	{
-		return result;
-	}
-	if (auto result = declareMethod(world, x509_class, "getSubjectX500Principal",
-			"()Ljavax/security/auth/x500/X500Principal;", false, returnObject("getSubjectX500Principal", g_x500_principal));
-		!result.ok())
-	{
-		return result;
-	}
-	if (auto result = declareMethod(world, x509_class, "getSerialNumber",
-			"()Ljava/math/BigInteger;", false, returnObject("getSerialNumber", g_big_integer));
-		!result.ok())
-	{
-		return result;
-	}
-	if (auto result = declareMethod(world, x500_class, "getName", "()Ljava/lang/String;", false,
-			returnString(kSubjectName));
-		!result.ok())
-	{
-		return result;
-	}
-	return declareMethod(world, big_integer_class, "toString", "(I)Ljava/lang/String;", false,
-		[](JavaWorld &java, InvokeContext &call) -> Result<uint64_t> {
-			// The native asks for radix 16; the captured certificate serial is
-			// all this object can ever answer.
-			if (debugEnabled())
-			{
-				std::fprintf(stderr, "szstone shim BigInteger.toString(%llu)\n",
-					static_cast<unsigned long long>(call.args.empty() ? 0 : call.args[0]));
-			}
-			if (call.args.size() != 1 || call.args[0] != 16)
-			{
-				return Error{ ErrorCode::Unsupported,
-					"BigInteger.toString: only radix 16 is declared" };
-			}
-			return java.newString(kSerialHex);
-		});
+
+	return std::move(binder).done();
 }
 
 } // namespace duckemu::user::szstone
