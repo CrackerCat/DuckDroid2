@@ -180,7 +180,7 @@ Result<void> BionicGlobals::initialize()
 		auxv.push_back(value);
 	};
 	add(kAtSysinfoEhdr, 0);
-	add(kAtHwcap, 0);
+	add(kAtHwcap, config_.hwcap);
 	add(kAtPagesz, kGuestPageSize);
 	add(kAtClktck, 100);
 	add(kAtPhdr, 0);
@@ -194,7 +194,7 @@ Result<void> BionicGlobals::initialize()
 	add(kAtEgid, config_.gid);
 	add(kAtSecure, 0);
 	add(kAtRandom, random_address.value());
-	add(kAtHwcap2, 0);
+	add(kAtHwcap2, config_.hwcap2);
 	add(kAtExecfn, progname_address.value());
 	add(kAtNull, 0);
 

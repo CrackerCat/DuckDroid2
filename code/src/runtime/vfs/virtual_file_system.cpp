@@ -279,6 +279,7 @@ ProcContext VirtualFileSystem::procContext() const
 	context.resolve_region_name = region_names_;
 	context.thread_count = thread_count_;
 	context.auxv = auxv_;
+	context.device = config_.device;
 	return context;
 }
 

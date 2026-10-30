@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <optional>
 
+#include "runtime/device/device_profile.hpp"
 #include "runtime/memory/address_space.hpp"
 
 namespace duckemu::runtime
@@ -38,6 +39,8 @@ struct SyscallContext
 	vfs::VirtualFileSystem &vfs;
 	// Instance-wide wall/monotonic clock; shared with Java System.
 	RuntimeClock &clock;
+	// Device identity (uname, getuid/prctl, ownership).
+	const device::DeviceProfile &device;
 };
 
 // Each subsystem returns nullopt for "not my syscall"; the dispatcher then

@@ -314,7 +314,11 @@ Result<std::unique_ptr<RuntimeInstance> > RuntimeInstance::create(const RuntimeC
 
 	loader::BionicGlobalsConfig globals_config;
 	globals_config.pid = config.pid;
-	globals_config.progname = "duckemu";
+	globals_config.uid = config.device.uid;
+	globals_config.gid = config.device.gid;
+	globals_config.progname = config.device.process_name;
+	globals_config.hwcap = config.device.hwcap;
+	globals_config.hwcap2 = config.device.hwcap2;
 	globals_config.environment = { "ANDROID_ROOT=/system", "ANDROID_DATA=/data" };
 	impl->bionic_globals =
 		std::make_unique<loader::BionicGlobals>(impl->memory, std::move(globals_config));
@@ -333,11 +337,12 @@ Result<std::unique_ptr<RuntimeInstance> > RuntimeInstance::create(const RuntimeC
 	vfs::VfsConfig vfs_config;
 	vfs_config.pid = config.pid;
 	vfs_config.tid = config.tid;
-	vfs_config.progname = "duckemu";
+	vfs_config.progname = config.device.process_name;
 	vfs_config.host_roots = config.filesystem_roots;
 	vfs_config.write_root = config.filesystem_write_root;
-	vfs_config.uid = config.file_uid;
-	vfs_config.gid = config.file_gid;
+	vfs_config.uid = config.device.uid;
+	vfs_config.gid = config.device.gid;
+	vfs_config.device = &config.device;
 	// Injected wall time also stamps file metadata, so a replay sees the same
 	// stat(2) results.
 	vfs_config.clock = &impl->clock;
@@ -393,6 +398,7 @@ Result<std::unique_ptr<RuntimeInstance> > RuntimeInstance::create(const RuntimeC
 	scheduler_config.diagnostic_capacity = config.diagnostic_capacity;
 	scheduler_config.vfs = impl->files.get();
 	scheduler_config.clock = &impl->clock;
+	scheduler_config.device = &config.device;
 
 	impl->scheduler = std::make_unique<threads::ThreadScheduler>(
 		impl->memory, *impl->backend, *impl->thunks, *impl->events, scheduler_config);

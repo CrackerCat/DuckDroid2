@@ -32,9 +32,14 @@ int64_t sysGetppid(SyscallContext &)
 	return 0;
 }
 
-int64_t sysGetUid(SyscallContext &)
+int64_t sysGetUid(SyscallContext &ctx)
 {
-	return 1000;
+	return static_cast<int64_t>(ctx.device.uid);
+}
+
+int64_t sysGetGid(SyscallContext &ctx)
+{
+	return static_cast<int64_t>(ctx.device.gid);
 }
 
 int64_t writeArray(SyscallContext &ctx, uint64_t address, const uint64_t *values, size_t count)
@@ -61,7 +66,10 @@ int64_t sysPrctl(SyscallContext &ctx)
 	}
 	if (option == kPrGetName)
 	{
-		const char name[16] = "duckemu";
+		char name[16] = {};
+		const std::string &process = ctx.device.process_name;
+		const size_t copy = process.size() < sizeof(name) - 1 ? process.size() : sizeof(name) - 1;
+		std::memcpy(name, process.data(), copy);
 		auto written = ctx.memory.write(GuestVA{ ctx.args[1] }, name, sizeof(name));
 		return written.ok() ? 0 : -kEfault;
 	}
@@ -231,11 +239,11 @@ int64_t sysUname(SyscallContext &ctx)
 	constexpr uint64_t kFieldSize = 65;
 	constexpr uint64_t kFieldCount = 6;
 	const std::string_view fields[kFieldCount] = {
-		"Linux",
-		"duckemu",
-		"6.1.0-duckemu",
-		"#1 SMP",
-		"aarch64",
+		ctx.device.sysname,
+		ctx.device.nodename,
+		ctx.device.kernel_release,
+		ctx.device.kernel_version,
+		ctx.device.machine,
 		"",
 	};
 	std::array<char, kFieldSize * kFieldCount> buffer{};
@@ -277,9 +285,10 @@ std::optional<int64_t> handleMiscSyscall(SyscallContext &ctx, uint32_t number)
 		return sysGetppid(ctx);
 	case kSysGetuid:
 	case kSysGeteuid:
+		return sysGetUid(ctx);
 	case kSysGetgid:
 	case kSysGetegid:
-		return sysGetUid(ctx);
+		return sysGetGid(ctx);
 	case kSysPrctl:
 		return sysPrctl(ctx);
 	case kSysSchedSetaffinity:

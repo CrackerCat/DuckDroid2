@@ -13,6 +13,7 @@
 #include "common/error/result.hpp"
 #include "runtime/backend/unicorn/unicorn_engine.hpp"
 #include "runtime/observer/semantic/thread_event.hpp"
+#include "runtime/device/device_profile.hpp"
 #include "runtime/observer/trace/trace_clock.hpp"
 #include "runtime/threads/runtime_thread.hpp"
 #include "runtime/threads/thread_system.hpp"
@@ -50,6 +51,8 @@ struct SchedulerConfig
 	size_t diagnostic_capacity = 1u << 14;
 	// Process-wide file table; every dispatcher gets the same instance.
 	vfs::VirtualFileSystem *vfs = nullptr;
+	// Device identity for uname/getuid/prctl and /proc; owned by the facade.
+	const device::DeviceProfile *device = nullptr;
 	// Instance-wide wall/monotonic clock (injectable for replays).
 	RuntimeClock *clock = nullptr;
 };

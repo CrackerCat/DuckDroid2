@@ -30,6 +30,10 @@ constexpr uint32_t kIntrSwi = 2;
 constexpr size_t kSyscallArgCount = 6;
 constexpr size_t kHostArgCount = 8;
 
+// Used when a caller builds a dispatcher without a device profile (tests of
+// the dispatcher alone); the facade always supplies one.
+const device::DeviceProfile kDefaultDevice{};
+
 constexpr int kArgRegs[kHostArgCount] = {
 	UC_ARM64_REG_X0,
 	UC_ARM64_REG_X1,
@@ -169,7 +173,8 @@ SvcDispatcher::SvcDispatcher(RuntimeMemory &memory,
 	threads::RuntimeThread &thread,
 	threads::ThreadSystem &threads,
 	vfs::VirtualFileSystem &vfs,
-	RuntimeClock &wall_clock)
+	RuntimeClock &wall_clock,
+	const device::DeviceProfile *device)
 	: memory_(memory)
 	, thunks_(thunks)
 	, events_(events)
@@ -179,6 +184,7 @@ SvcDispatcher::SvcDispatcher(RuntimeMemory &memory,
 	, threads_(threads)
 	, vfs_(vfs)
 	, wall_clock_(wall_clock)
+	, device_(device != nullptr ? *device : kDefaultDevice)
 {
 }
 
@@ -312,7 +318,7 @@ int64_t SvcDispatcher::dispatchSyscall(uint32_t number, const std::array<uint64_
 	++stats_.svc_calls;
 	stats_.last_syscall = number;
 
-	SyscallContext ctx{ {}, memory_, pid_, thread_.tid, thread_, threads_, vfs_, wall_clock_ };
+	SyscallContext ctx{ {}, memory_, pid_, thread_.tid, thread_, threads_, vfs_, wall_clock_, device_ };
 	for (size_t i = 0; i < kSyscallArgCount; ++i)
 	{
 		ctx.args[i] = args[i];

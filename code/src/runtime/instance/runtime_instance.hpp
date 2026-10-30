@@ -12,6 +12,7 @@
 
 #include "common/error/result.hpp"
 #include "common/id/ids.hpp"
+#include "runtime/device/device_profile.hpp"
 #include "runtime/memory/thunk/thunk_table.hpp"
 #include "runtime/observer/diagnostic/diagnostic_event.hpp"
 #include "runtime/observer/event_bus.hpp"
@@ -57,10 +58,9 @@ struct RuntimeConfig
 	// Empty keeps the whole namespace read-only (EROFS).
 	std::string filesystem_write_root;
 
-	// Owner reported by stat(2) for every guest file. Device 画像 (DeviceProfile)
-	// replaces these with the target's values.
-	uint32_t file_uid = 1000;
-	uint32_t file_gid = 1000;
+	// Device identity: uname, /proc synthesis, stat owner, auxv hwcap and the
+	// process name. Target packs override the fields they need.
+	device::DeviceProfile device;
 
 	// Re-enables the M4 fixture virtual table (libc/liblog stubs). Off in
 	// production; 04_so_load turns it on to keep testing the thunk path.

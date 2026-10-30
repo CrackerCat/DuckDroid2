@@ -172,7 +172,8 @@ Result<std::unique_ptr<RuntimeThread> > ThreadScheduler::createThreadObject(
 		*thread,
 		*this,
 		*config_.vfs,
-		*config_.clock);
+		*config_.clock,
+		config_.device);
 
 	auto engine = createEngineFor(*thread);
 	if (!engine.ok())

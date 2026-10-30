@@ -22,6 +22,10 @@ namespace duckemu::runtime
 {
 class RuntimeMemory;
 class RuntimeClock;
+namespace device
+{
+struct DeviceProfile;
+}
 }
 
 namespace duckemu::runtime::vfs
@@ -49,6 +53,9 @@ struct VfsConfig
 	// When wall time is injected, stat timestamps come from it so a replay is
 	// byte-identical. Null keeps the host's file times.
 	RuntimeClock *clock = nullptr;
+
+	// Device identity for /proc synthesis. Null keeps the built-in defaults.
+	const device::DeviceProfile *device = nullptr;
 };
 
 // The process-level file system seen by guest syscalls: a descriptor table

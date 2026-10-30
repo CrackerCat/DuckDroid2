@@ -14,6 +14,10 @@
 namespace duckemu::runtime
 {
 class RuntimeMemory;
+namespace device
+{
+struct DeviceProfile;
+}
 }
 
 namespace duckemu::runtime::vfs
@@ -30,6 +34,8 @@ struct ProcContext
 	std::function<std::string(std::string_view)> resolve_region_name;
 	std::function<uint64_t()> thread_count;
 	std::function<Result<std::pair<GuestVA, uint64_t> >()> auxv;
+	// Device identity; null keeps generic defaults.
+	const device::DeviceProfile *device = nullptr;
 };
 
 [[nodiscard]] bool isProcPath(std::string_view path);

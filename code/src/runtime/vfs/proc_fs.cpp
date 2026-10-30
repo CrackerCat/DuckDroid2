@@ -5,6 +5,7 @@
 #include <cstring>
 #include <vector>
 
+#include "runtime/device/device_profile.hpp"
 #include "runtime/memory/address_space.hpp"
 #include "runtime/memory/region.hpp"
 
@@ -56,24 +57,101 @@ std::string buildMaps(const ProcContext &context)
 
 std::string buildStatus(const ProcContext &context)
 {
+	const device::DeviceProfile *profile = context.device;
+	const uint32_t uid = profile != nullptr ? profile->uid : 1000;
+	const uint32_t gid = profile != nullptr ? profile->gid : 1000;
+	const std::string &name = profile != nullptr ? profile->process_name : context.progname;
 	const uint64_t threads = context.thread_count ? context.thread_count() : 1;
-	char buffer[512];
-	std::snprintf(buffer, sizeof(buffer),
+	char buffer[2048];
+	std::snprintf(buffer,
+		sizeof(buffer),
 		"Name:\t%s\n"
+		"Umask:\t0077\n"
 		"State:\tR (running)\n"
 		"Tgid:\t%u\n"
 		"Pid:\t%u\n"
 		"PPid:\t0\n"
 		"TracerPid:\t0\n"
-		"Uid:\t1000\t1000\t1000\t1000\n"
-		"Gid:\t1000\t1000\t1000\t1000\n"
+		"Uid:\t%u\t%u\t%u\t%u\n"
+		"Gid:\t%u\t%u\t%u\t%u\n"
 		"FDSize:\t256\n"
-		"Threads:\t%llu\n",
-		context.progname.c_str(),
+		"Groups:\t%u\t%u\n"
+		"VmPeak:\t 3400000 kB\n"
+		"VmSize:\t 3358000 kB\n"
+		"VmRSS:\t   68000 kB\n"
+		"VmData:\t  210000 kB\n"
+		"VmStk:\t     132 kB\n"
+		"VmExe:\t     180 kB\n"
+		"VmLib:\t   80000 kB\n"
+		"Threads:\t%llu\n"
+		"SigQ:\t0/16000\n"
+		"SigPnd:\t0000000000000000\n"
+		"CapInh:\t0000000000000000\n"
+		"CapPrm:\t0000000000000000\n"
+		"CapEff:\t0000000000000000\n"
+		"CapBnd:\t0000000000000000\n"
+		"Seccomp:\t2\n"
+		"Seccomp_filters:\t1\n",
+		name.c_str(),
 		context.pid,
-		context.tid,
+		context.pid,
+		uid,
+		uid,
+		uid,
+		uid,
+		gid,
+		gid,
+		gid,
+		gid,
+		gid,
+		gid,
 		static_cast<unsigned long long>(threads));
 	return buffer;
+}
+
+std::string buildVersion(const ProcContext &context)
+{
+	const device::DeviceProfile *profile = context.device;
+	const std::string release = profile != nullptr ? profile->kernel_release : "6.1.0-duckemu";
+	const std::string version = profile != nullptr ? profile->kernel_version : "#1 SMP";
+	return "Linux version " + release + " (android-build@localhost) " + version + "\n";
+}
+
+std::string buildCpuinfo(const ProcContext &context)
+{
+	const device::DeviceProfile *profile = context.device;
+	const std::string implementer = profile != nullptr ? profile->cpu_implementer : "0x41";
+	const std::string architecture = profile != nullptr ? profile->cpu_architecture : "8";
+	const std::string part = profile != nullptr ? profile->cpu_part : "0xd0c";
+	const uint32_t revision = profile != nullptr ? profile->cpu_revision : 1;
+	const uint32_t count = profile != nullptr ? profile->cpu_count : 8;
+	const std::string features = profile != nullptr ? profile->cpu_features :
+								 "fp asimd evtstrm aes pmull sha1 sha2 crc32";
+
+	std::string text;
+	char buffer[512];
+	for (uint32_t core = 0; core < count; ++core)
+	{
+		std::snprintf(buffer,
+			sizeof(buffer),
+			"processor\t: %u\n"
+			"BogoMIPS\t: 38.40\n"
+			"Features\t: %s\n"
+			"CPU implementer\t: %s\n"
+			"CPU architecture: %s\n"
+			"CPU variant\t: 0x7\n"
+			"CPU part\t: %s\n"
+			"CPU revision\t: %u\n"
+			"\n",
+			core,
+			features.c_str(),
+			implementer.c_str(),
+			architecture.c_str(),
+			part.c_str(),
+			revision);
+		text += buffer;
+	}
+	return text;
 }
 
 std::string buildCmdline(const ProcContext &context)
@@ -147,6 +225,19 @@ std::optional<std::function<std::string()> > makeGenerator(std::string_view path
 	const size_t slash = rest.find('/');
 	if (slash == std::string_view::npos)
 	{
+		// Process-independent /proc entries.
+		if (rest == "version")
+		{
+			return [context] {
+				return buildVersion(context);
+			};
+		}
+		if (rest == "cpuinfo")
+		{
+			return [context] {
+				return buildCpuinfo(context);
+			};
+		}
 		return std::nullopt;
 	}
 	if (!pidComponentMatches(rest.substr(0, slash), context))
@@ -183,6 +274,18 @@ std::optional<std::function<std::string()> > makeGenerator(std::string_view path
 	{
 		return [context] {
 			return buildComm(context);
+		};
+	}
+	if (name == "version")
+	{
+		return [context] {
+			return buildVersion(context);
+		};
+	}
+	if (name == "cpuinfo")
+	{
+		return [context] {
+			return buildCpuinfo(context);
 		};
 	}
 	return std::nullopt;

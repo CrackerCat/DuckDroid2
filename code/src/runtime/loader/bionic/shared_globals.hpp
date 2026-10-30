@@ -21,6 +21,9 @@ struct BionicGlobalsConfig
 	uint32_t pid = 1000;
 	uint32_t uid = 1000;
 	uint32_t gid = 1000;
+	// AT_HWCAP / AT_HWCAP2; zero is the baseline this backend implements.
+	uint64_t hwcap = 0;
+	uint64_t hwcap2 = 0;
 	std::string progname = "duckemu";
 	std::vector<std::string> environment;
 };

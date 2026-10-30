@@ -168,6 +168,17 @@ add_custom_command(
     DEPENDS "${DUCKEMU_SO_SOURCE_DIR}/libev.c"
     COMMENT "Building guest .so libev.so")
 
+# 04h_device_profile: raw-syscall fixture for uname/proc/profile.
+add_custom_command(
+    OUTPUT "${DUCKEMU_SO_BUILD_DIR}/libdev.so"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${DUCKEMU_SO_BUILD_DIR}"
+    COMMAND ${DUCKEMU_CLANG_EXECUTABLE} ${DUCKEMU_GUEST_SO_FLAGS}
+            -fno-stack-protector -fno-builtin
+            -Wl,-soname,libdev.so "${DUCKEMU_SO_SOURCE_DIR}/libdev.c"
+            -o "${DUCKEMU_SO_BUILD_DIR}/libdev.so"
+    DEPENDS "${DUCKEMU_SO_SOURCE_DIR}/libdev.c"
+    COMMENT "Building guest .so libdev.so")
+
 # The runtime view of the fixture: only what the loader may legitimately open.
 # liblog.so and libc.so exist but are not ELF, so a loader that consults the
 # filesystem before the virtual module table fails here instead of passing.
@@ -185,6 +196,7 @@ add_custom_command(
            "${DUCKEMU_SO_RUNTIME_DIR}/libfd.so"
            "${DUCKEMU_SO_RUNTIME_DIR}/libwr.so"
            "${DUCKEMU_SO_RUNTIME_DIR}/libev.so"
+           "${DUCKEMU_SO_RUNTIME_DIR}/libdev.so"
     COMMAND ${CMAKE_COMMAND} -E make_directory "${DUCKEMU_SO_RUNTIME_DIR}"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${DUCKEMU_SO_BUILD_DIR}/liba.so" "${DUCKEMU_SO_RUNTIME_DIR}/liba.so"
@@ -204,6 +216,8 @@ add_custom_command(
             "${DUCKEMU_SO_BUILD_DIR}/libwr.so" "${DUCKEMU_SO_RUNTIME_DIR}/libwr.so"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${DUCKEMU_SO_BUILD_DIR}/libev.so" "${DUCKEMU_SO_RUNTIME_DIR}/libev.so"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${DUCKEMU_SO_BUILD_DIR}/libdev.so" "${DUCKEMU_SO_RUNTIME_DIR}/libdev.so"
     DEPENDS "${DUCKEMU_SO_BUILD_DIR}/liba.so"
             "${DUCKEMU_SO_BUILD_DIR}/libb.so"
             "${DUCKEMU_SO_BUILD_DIR}/libmissing.so"
@@ -212,7 +226,8 @@ add_custom_command(
             "${DUCKEMU_SO_BUILD_DIR}/libdlcaller.so"
             "${DUCKEMU_SO_BUILD_DIR}/libfd.so"
             "${DUCKEMU_SO_BUILD_DIR}/libwr.so"
-            "${DUCKEMU_SO_BUILD_DIR}/libev.so")
+            "${DUCKEMU_SO_BUILD_DIR}/libev.so"
+            "${DUCKEMU_SO_BUILD_DIR}/libdev.so")
 
 add_custom_target(guest_so ALL
     DEPENDS "${DUCKEMU_SO_RUNTIME_DIR}/liba.so"
@@ -223,7 +238,8 @@ add_custom_target(guest_so ALL
             "${DUCKEMU_SO_RUNTIME_DIR}/libdlcaller.so"
             "${DUCKEMU_SO_RUNTIME_DIR}/libfd.so"
             "${DUCKEMU_SO_RUNTIME_DIR}/libwr.so"
-            "${DUCKEMU_SO_RUNTIME_DIR}/libev.so")
+            "${DUCKEMU_SO_RUNTIME_DIR}/libev.so"
+            "${DUCKEMU_SO_RUNTIME_DIR}/libdev.so")
 
 # ---------------------------------------------------------------------------
 # Test support
@@ -272,6 +288,7 @@ duckemu_add_loader_test(04d_dlopen)
 duckemu_add_loader_test(04e_dup_fcntl)
 duckemu_add_loader_test(04f_vfs_write)
 duckemu_add_loader_test(04g_event_loop)
+duckemu_add_loader_test(04h_device_profile)
 
 # ---------------------------------------------------------------------------
 # M4.5 gate: real bionic from the local Android environment.

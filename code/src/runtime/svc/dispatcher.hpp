@@ -32,6 +32,11 @@ namespace duckemu::runtime::vfs
 class VirtualFileSystem;
 }
 
+namespace duckemu::runtime::device
+{
+struct DeviceProfile;
+}
+
 namespace duckemu::runtime::svc
 {
 
@@ -48,7 +53,8 @@ class SvcDispatcher
 		threads::RuntimeThread &thread,
 		threads::ThreadSystem &threads,
 		vfs::VirtualFileSystem &vfs,
-		RuntimeClock &wall_clock);
+		RuntimeClock &wall_clock,
+		const device::DeviceProfile *device);
 
 	// UC_HOOK_INTR entry. Decodes the trapping SVC at PC - 4:
 	//   imm == 0            -> Linux syscall, number in x8, args x0..x5
@@ -87,6 +93,7 @@ class SvcDispatcher
 	threads::ThreadSystem &threads_;
 	vfs::VirtualFileSystem &vfs_;
 	RuntimeClock &wall_clock_;
+	const device::DeviceProfile &device_;
 	Stats stats_;
 };
 
