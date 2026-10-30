@@ -86,6 +86,10 @@ Result<void> ThreadScheduler::start()
 	{
 		return Error{ ErrorCode::Internal, "the scheduler requires a clock" };
 	}
+	if (config_.random == nullptr)
+	{
+		return Error{ ErrorCode::Internal, "the scheduler requires an entropy source" };
+	}
 	next_tid_ = config_.tid + 1;
 
 	auto created = createThreadObject(config_.tid, 0, true);
@@ -173,7 +177,8 @@ Result<std::unique_ptr<RuntimeThread> > ThreadScheduler::createThreadObject(
 		*this,
 		*config_.vfs,
 		*config_.clock,
-		config_.device);
+		config_.device,
+		*config_.random);
 
 	auto engine = createEngineFor(*thread);
 	if (!engine.ok())

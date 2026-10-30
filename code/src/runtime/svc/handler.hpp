@@ -9,6 +9,7 @@
 
 namespace duckemu::runtime
 {
+class RandomSource;
 class RuntimeClock;
 }
 
@@ -41,6 +42,8 @@ struct SyscallContext
 	RuntimeClock &clock;
 	// Device identity (uname, getuid/prctl, ownership).
 	const device::DeviceProfile &device;
+	// Instance entropy stream shared with /dev/{u,}random.
+	RandomSource &random;
 };
 
 // Each subsystem returns nullopt for "not my syscall"; the dispatcher then

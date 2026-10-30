@@ -2,11 +2,11 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
-#include <random>
 #include <string_view>
 
 #include "runtime/clock/runtime_clock.hpp"
 #include "runtime/memory/address_space.hpp"
+#include "runtime/random/random_source.hpp"
 #include "runtime/svc/handler.hpp"
 #include "runtime/svc/syscall_numbers.hpp"
 
@@ -144,21 +144,14 @@ int64_t sysGetrandom(SyscallContext &ctx)
 		return 0;
 	}
 
-	// Host RNG; deterministic profiles can replace this later.
-	static thread_local std::mt19937_64 generator([] {
-		std::random_device device;
-		return (static_cast<uint64_t>(device()) << 32) ^ device();
-	}());
+	// One stream per instance, shared with /dev/{u,}random so both surfaces
+	// agree; a replay can pin it when RandomSource takes a seed.
 	std::array<uint8_t, 256> chunk{};
 	uint64_t remaining = count;
 	while (remaining > 0)
 	{
 		const uint64_t take = remaining < chunk.size() ? remaining : chunk.size();
-		for (uint64_t i = 0; i < take; i += sizeof(uint64_t))
-		{
-			const uint64_t word = generator();
-			std::memcpy(chunk.data() + i, &word, sizeof(word));
-		}
+		ctx.random.fill(chunk.data(), take);
 		auto written = ctx.memory.write(GuestVA{ address }, chunk.data(), take);
 		if (!written.ok())
 		{

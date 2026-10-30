@@ -28,15 +28,23 @@ Result<std::unique_ptr<PropertyFiles> > PropertyFiles::build(const PropertyTable
 		return images.error();
 	}
 
+	auto blob = [](std::vector<uint8_t> bytes) {
+		vfs::SyntheticNode node;
+		node.content = share(std::move(bytes));
+		return node;
+	};
+
 	std::unique_ptr<PropertyFiles> files(new PropertyFiles());
 	files->context_ = images.value().context;
-	files->nodes_.emplace("/dev/__properties__", vfs::SyntheticNode{ true, nullptr });
+	vfs::SyntheticNode directory;
+	directory.directory = true;
+	files->nodes_.emplace("/dev/__properties__", directory);
 	files->nodes_.emplace("/dev/__properties__/property_info",
-		vfs::SyntheticNode{ false, share(std::move(images.value().property_info)) });
+		blob(std::move(images.value().property_info)));
 	files->nodes_.emplace("/dev/__properties__/properties_serial",
-		vfs::SyntheticNode{ false, share(std::move(images.value().serial_area)) });
+		blob(std::move(images.value().serial_area)));
 	files->nodes_.emplace("/dev/__properties__/" + files->context_,
-		vfs::SyntheticNode{ false, share(std::move(images.value().context_area)) });
+		blob(std::move(images.value().context_area)));
 	return files;
 }
 

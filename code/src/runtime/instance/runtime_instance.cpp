@@ -15,8 +15,10 @@
 #include "runtime/observer/trace/svc_trace.hpp"
 #include "runtime/props/property_files.hpp"
 #include "runtime/props/property_table.hpp"
+#include "runtime/random/random_source.hpp"
 #include "runtime/threads/scheduler.hpp"
 #include "runtime/threads/tls/tls_manager.hpp"
+#include "runtime/vfs/dev_file_system.hpp"
 #include "runtime/vfs/virtual_file_system.hpp"
 
 namespace duckemu::runtime
@@ -52,9 +54,14 @@ struct RuntimeInstance::Impl : loader::DlService
 	std::unique_ptr<jni::JniState> jni;
 	std::unique_ptr<loader::BionicGlobals> bionic_globals;
 	std::unique_ptr<loader::ModuleLoader> modules;
+	// Entropy for getrandom(2) and /dev/{u,}random; shared, so declared before
+	// the scheduler and the VFS (reverse declaration order = destroyed last).
+	std::unique_ptr<RandomSource> random;
 	// The /dev/__properties__ images. Declared before the VFS (which points at
 	// it) so it is destroyed after: reverse declaration order.
 	std::unique_ptr<props::PropertyFiles> properties;
+	// /dev/null, /dev/zero, /dev/random, /dev/urandom.
+	std::unique_ptr<vfs::DevFileSystem> dev;
 	// Files outlive the modules whose names they resolve (/proc/self/maps).
 	std::unique_ptr<vfs::VirtualFileSystem> files;
 	std::unique_ptr<tls::TlsManager> tls;
@@ -358,6 +365,8 @@ Result<std::unique_ptr<RuntimeInstance> > RuntimeInstance::create(const RuntimeC
 		return property_files.error();
 	}
 	impl->properties = std::move(property_files).value();
+	impl->random = std::make_unique<RandomSource>();
+	impl->dev = std::make_unique<vfs::DevFileSystem>(*impl->random);
 
 	vfs::VfsConfig vfs_config;
 	vfs_config.pid = config.pid;
@@ -368,7 +377,7 @@ Result<std::unique_ptr<RuntimeInstance> > RuntimeInstance::create(const RuntimeC
 	vfs_config.uid = config.device.uid;
 	vfs_config.gid = config.device.gid;
 	vfs_config.device = &config.device;
-	vfs_config.synthetic = impl->properties.get();
+	vfs_config.synthetic_mounts = { impl->dev.get(), impl->properties.get() };
 	// Injected wall time also stamps file metadata, so a replay sees the same
 	// stat(2) results.
 	vfs_config.clock = &impl->clock;
@@ -425,6 +434,7 @@ Result<std::unique_ptr<RuntimeInstance> > RuntimeInstance::create(const RuntimeC
 	scheduler_config.vfs = impl->files.get();
 	scheduler_config.clock = &impl->clock;
 	scheduler_config.device = &config.device;
+	scheduler_config.random = impl->random.get();
 
 	impl->scheduler = std::make_unique<threads::ThreadScheduler>(
 		impl->memory, *impl->backend, *impl->thunks, *impl->events, scheduler_config);

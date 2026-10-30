@@ -26,6 +26,7 @@ enum class FileKind : uint8_t
 	Regular = 0,
 	Memory,
 	Static, // immutable synthetic mount entry (/dev/__properties__)
+	Device, // character device (/dev/null, /dev/zero, /dev/urandom)
 	Stdio,
 	Host,
 	Event, // eventfd
@@ -41,6 +42,7 @@ struct FileStat
 	uint64_t device = 0;
 	uint64_t inode = 0;
 	uint32_t mode = 0; // S_IF* | permission bits
+	uint64_t rdev = 0; // st_rdev for character devices (arm64 st_rdev offset 32)
 	uint32_t link_count = 1;
 	uint32_t uid = 1000;
 	uint32_t gid = 1000;

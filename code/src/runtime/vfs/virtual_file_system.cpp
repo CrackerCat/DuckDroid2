@@ -283,6 +283,28 @@ ProcContext VirtualFileSystem::procContext() const
 	return context;
 }
 
+std::optional<SyntheticNode> VirtualFileSystem::findSynthetic(std::string_view guest_path) const
+{
+	// Reverse order: a later mount can shadow an earlier one.
+	for (auto it = config_.synthetic_mounts.rbegin(); it != config_.synthetic_mounts.rend(); ++it)
+	{
+		if (auto node = (*it)->lookup(guest_path))
+		{
+			return node;
+		}
+	}
+	return std::nullopt;
+}
+
+uint32_t VirtualFileSystem::syntheticMode(const SyntheticNode &node)
+{
+	if (node.mode != 0)
+	{
+		return node.mode;
+	}
+	return node.directory ? (S_IFDIR | 0555) : (S_IFREG | 0444);
+}
+
 Result<std::unique_ptr<File> > VirtualFileSystem::openPath(const std::string &guest_path,
 	uint64_t flags) const
 {
@@ -300,21 +322,21 @@ Result<std::unique_ptr<File> > VirtualFileSystem::openPath(const std::string &gu
 		return std::unique_ptr<File>(new MemoryFile(guest_path, std::move(generator.value())));
 	}
 
-	if (config_.synthetic != nullptr)
+	if (auto node = findSynthetic(guest_path))
 	{
-		auto node = config_.synthetic->lookup(guest_path);
-		if (node.has_value())
+		if (node->directory)
 		{
-			if (node->directory)
-			{
-				return Error{ ErrorCode::IsDirectory, guest_path + " is a directory" };
-			}
-			if ((flags & kODirectory) != 0)
-			{
-				return Error{ ErrorCode::NotDirectory, guest_path + " is not a directory" };
-			}
-			return std::unique_ptr<File>(new StaticFile(guest_path, std::move(node->content)));
+			return Error{ ErrorCode::IsDirectory, guest_path + " is a directory" };
 		}
+		if ((flags & kODirectory) != 0)
+		{
+			return Error{ ErrorCode::NotDirectory, guest_path + " is not a directory" };
+		}
+		if (node->create)
+		{
+			return node->create(guest_path, flags);
+		}
+		return std::unique_ptr<File>(new StaticFile(guest_path, std::move(node->content)));
 	}
 
 	auto host = resolveHost(guest_path);
@@ -367,8 +389,14 @@ Result<uint64_t> VirtualFileSystem::open(uint64_t dirfd,
 	{
 		return Error{ ErrorCode::Unsupported, "proc files are read-only" };
 	}
-	if (config_.synthetic != nullptr && config_.synthetic->lookup(guest_path).has_value())
+	if (auto node = findSynthetic(guest_path))
 	{
+		if (node->create)
+		{
+			// Character devices accept every access mode (O_CREAT/O_TRUNC are
+			// meaningless but legal, as on the kernel).
+			return fds_.insert(node->create(guest_path, flags));
+		}
 		// The property service is not modelled; like an app without write
 		// access to /dev/__properties__, the open fails.
 		return Error{ ErrorCode::Unsupported, guest_path + " is read-only" };
@@ -554,21 +582,18 @@ Result<FileStat> VirtualFileSystem::stat(uint64_t dirfd, std::string_view path)
 		return stat;
 	}
 
-	if (config_.synthetic != nullptr)
+	if (auto node = findSynthetic(guest_path))
 	{
-		auto node = config_.synthetic->lookup(guest_path);
-		if (node.has_value())
-		{
-			FileStat result;
-			result.inode = std::hash<std::string>{}(guest_path);
-			result.mode = node->directory ? (S_IFDIR | 0555) : (S_IFREG | 0444);
-			result.link_count = node->directory ? 2 : 1;
-			result.uid = 0;
-			result.gid = 0;
-			result.size = node->content ? node->content->size() : 0;
-			result.blocks = (result.size + 511) / 512;
-			return result;
-		}
+		FileStat result;
+		result.inode = std::hash<std::string>{}(guest_path);
+		result.mode = syntheticMode(*node);
+		result.rdev = node->rdev;
+		result.link_count = node->directory ? 2 : 1;
+		result.uid = 0;
+		result.gid = 0;
+		result.size = node->content ? node->content->size() : 0;
+		result.blocks = (result.size + 511) / 512;
+		return result;
 	}
 
 	auto host = resolveHost(guest_path);
@@ -700,21 +725,24 @@ Result<void> VirtualFileSystem::access(uint64_t dirfd, std::string_view path, ui
 	}
 	const std::string &guest_path = resolved.value();
 
-	if (config_.synthetic != nullptr)
+	if (auto node = findSynthetic(guest_path))
 	{
-		auto node = config_.synthetic->lookup(guest_path);
-		if (node.has_value())
+		// Synthetic nodes are root-owned with the same bits for every class,
+		// so the "other" permission bits are what an unprivileged guest sees.
+		const uint32_t permissions = syntheticMode(*node) & 0777;
+		if ((mode & kAccessRead) != 0 && (permissions & 0444) == 0)
 		{
-			if ((mode & kAccessWrite) != 0)
-			{
-				return Error{ ErrorCode::PermissionDenied, guest_path + " is read-only" };
-			}
-			if ((mode & kAccessExecute) != 0 && !node->directory)
-			{
-				return Error{ ErrorCode::PermissionDenied, guest_path + " is not executable" };
-			}
-			return {};
+			return Error{ ErrorCode::PermissionDenied, guest_path + " is not readable" };
 		}
+		if ((mode & kAccessWrite) != 0 && (permissions & 0222) == 0)
+		{
+			return Error{ ErrorCode::PermissionDenied, guest_path + " is read-only" };
+		}
+		if ((mode & kAccessExecute) != 0 && (permissions & 0111) == 0)
+		{
+			return Error{ ErrorCode::PermissionDenied, guest_path + " is not executable" };
+		}
+		return {};
 	}
 
 	if (isProcPath(guest_path))

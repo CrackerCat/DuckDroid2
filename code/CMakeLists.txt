@@ -98,9 +98,11 @@ add_library(duckemu_runtime STATIC
   src/runtime/props/property_files.cpp
   src/runtime/props/property_image.cpp
   src/runtime/props/property_table.cpp
+  src/runtime/random/random_source.cpp
   src/runtime/vfs/runtime_vfs.cpp
   src/runtime/vfs/file.cpp
   src/runtime/vfs/fd_table.cpp
+  src/runtime/vfs/dev_file_system.cpp
   src/runtime/vfs/event_file.cpp
   src/runtime/vfs/proc_fs.cpp
   src/runtime/vfs/virtual_file_system.cpp

@@ -13,6 +13,7 @@
 
 namespace duckemu::runtime
 {
+class RandomSource;
 class RuntimeClock;
 }
 
@@ -54,7 +55,8 @@ class SvcDispatcher
 		threads::ThreadSystem &threads,
 		vfs::VirtualFileSystem &vfs,
 		RuntimeClock &wall_clock,
-		const device::DeviceProfile *device);
+		const device::DeviceProfile *device,
+		RandomSource &random);
 
 	// UC_HOOK_INTR entry. Decodes the trapping SVC at PC - 4:
 	//   imm == 0            -> Linux syscall, number in x8, args x0..x5
@@ -94,6 +96,7 @@ class SvcDispatcher
 	vfs::VirtualFileSystem &vfs_;
 	RuntimeClock &wall_clock_;
 	const device::DeviceProfile &device_;
+	RandomSource &random_;
 	Stats stats_;
 };
 

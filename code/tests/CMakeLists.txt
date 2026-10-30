@@ -467,6 +467,17 @@ add_test(NAME 04i_properties COMMAND 04i_properties)
 set_tests_properties(04i_properties PROPERTIES TIMEOUT 120)
 duckemu_set_warnings(04i_properties)
 
+# M4.6: /dev character nodes through libc's open/read/write/fstat/stat/access.
+add_executable(04j_dev_nodes integration/04j_dev_nodes.cpp)
+target_link_libraries(04j_dev_nodes PRIVATE duckemu_runtime duckemu_test_support)
+target_compile_definitions(04j_dev_nodes PRIVATE
+  DUCKEMU_TRACE_DIR="${CMAKE_CURRENT_BINARY_DIR}/traces"
+  DUCKEMU_ROM_BOOTSTRAP="${DUCKEMU_ROM_BOOTSTRAP}"
+  DUCKEMU_ROM_LIB64="${DUCKEMU_ROM_LIB64}")
+add_test(NAME 04j_dev_nodes COMMAND 04j_dev_nodes)
+set_tests_properties(04j_dev_nodes PROPERTIES TIMEOUT 120)
+duckemu_set_warnings(04j_dev_nodes)
+
 # M4.6 S3: VFS + /proc. A ROM symbols tree is mounted as guest "/" so the
 # read-only file mmap half of the gate has a real file to map.
 add_executable(04c_vfs integration/04c_vfs.cpp)

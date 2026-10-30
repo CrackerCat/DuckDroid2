@@ -37,6 +37,7 @@ constexpr size_t kStatDeviceOffset = 0;
 constexpr size_t kStatNlinkOffset = 20;
 constexpr size_t kStatUidOffset = 24;
 constexpr size_t kStatGidOffset = 28;
+constexpr size_t kStatRdevOffset = 32;
 
 constexpr uint32_t kModeCharacter = 0020000;
 
@@ -124,6 +125,7 @@ int64_t writeStat(SyscallContext &ctx, uint64_t address, const vfs::FileStat &st
 	putU32(bytes, kStatNlinkOffset, stat.link_count);
 	putU32(bytes, kStatUidOffset, stat.uid);
 	putU32(bytes, kStatGidOffset, stat.gid);
+	putU64(bytes, kStatRdevOffset, stat.rdev);
 	putU64(bytes, kStatSizeOffset, stat.size);
 	putU32(bytes, kStatBlkSizeOffset, stat.block_size);
 	putU64(bytes, kStatBlocksOffset, stat.blocks);

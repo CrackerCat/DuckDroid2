@@ -21,6 +21,7 @@
 namespace duckemu::runtime
 {
 
+class RandomSource;
 class RuntimeMemory;
 class UnicornBackend;
 class ThunkTable;
@@ -53,6 +54,9 @@ struct SchedulerConfig
 	vfs::VirtualFileSystem *vfs = nullptr;
 	// Device identity for uname/getuid/prctl and /proc; owned by the facade.
 	const device::DeviceProfile *device = nullptr;
+	// Instance entropy stream (getrandom and /dev/{u,}random); owned by the
+	// facade.
+	RandomSource *random = nullptr;
 	// Instance-wide wall/monotonic clock (injectable for replays).
 	RuntimeClock *clock = nullptr;
 };

@@ -58,9 +58,9 @@ struct VfsConfig
 	// Device identity for /proc synthesis. Null keeps the built-in defaults.
 	const device::DeviceProfile *device = nullptr;
 
-	// Read-only synthetic mounts outside the host roots (/dev/__properties__).
-	// The owner outlives the VFS. Null keeps the namespace host-only.
-	const SyntheticFileSystem *synthetic = nullptr;
+	// Synthetic mounts outside the host roots (/dev, /dev/__properties__).
+	// Owners outlive the VFS; later entries win on overlap.
+	std::vector<const SyntheticFileSystem *> synthetic_mounts;
 };
 
 // The process-level file system seen by guest syscalls: a descriptor table
@@ -172,6 +172,10 @@ class VirtualFileSystem
 	[[nodiscard]] Result<HostPath> resolveHost(const std::string &guest_path) const;
 	[[nodiscard]] Result<std::unique_ptr<File> > openPath(const std::string &guest_path,
 		uint64_t flags) const;
+	// First synthetic mount that answers for this path (later mounts win).
+	[[nodiscard]] std::optional<SyntheticNode> findSynthetic(std::string_view guest_path) const;
+	// Effective guest mode of a synthetic node.
+	[[nodiscard]] static uint32_t syntheticMode(const SyntheticNode &node);
 	[[nodiscard]] ProcContext procContext() const;
 
 	RuntimeMemory &memory_;

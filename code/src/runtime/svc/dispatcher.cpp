@@ -10,6 +10,7 @@
 #include "common/log/logger.hpp"
 #include "runtime/observer/diagnostic/guest_stack.hpp"
 #include "runtime/observer/event_bus.hpp"
+#include "runtime/random/random_source.hpp"
 #include "runtime/svc/handler.hpp"
 #include "runtime/svc/syscall_names.hpp"
 #include "runtime/svc/syscall_numbers.hpp"
@@ -174,7 +175,8 @@ SvcDispatcher::SvcDispatcher(RuntimeMemory &memory,
 	threads::ThreadSystem &threads,
 	vfs::VirtualFileSystem &vfs,
 	RuntimeClock &wall_clock,
-	const device::DeviceProfile *device)
+	const device::DeviceProfile *device,
+	RandomSource &random)
 	: memory_(memory)
 	, thunks_(thunks)
 	, events_(events)
@@ -185,6 +187,7 @@ SvcDispatcher::SvcDispatcher(RuntimeMemory &memory,
 	, vfs_(vfs)
 	, wall_clock_(wall_clock)
 	, device_(device != nullptr ? *device : kDefaultDevice)
+	, random_(random)
 {
 }
 
@@ -318,7 +321,8 @@ int64_t SvcDispatcher::dispatchSyscall(uint32_t number, const std::array<uint64_
 	++stats_.svc_calls;
 	stats_.last_syscall = number;
 
-	SyscallContext ctx{ {}, memory_, pid_, thread_.tid, thread_, threads_, vfs_, wall_clock_, device_ };
+	SyscallContext ctx{ {}, memory_, pid_, thread_.tid, thread_, threads_, vfs_, wall_clock_, device_,
+		random_ };
 	for (size_t i = 0; i < kSyscallArgCount; ++i)
 	{
 		ctx.args[i] = args[i];
