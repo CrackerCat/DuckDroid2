@@ -127,10 +127,9 @@ thunk / SVC 回到宿主 C++。
   `rw.log` 严格沿用 QBDI 四件套的列结构、行号和 JSON 约定，另加 `threads.tsv`
   记线程归属。目标 runner 用 `--trace DIR` 一个参数：`svc.log` 写 `DIR/svc.log`，
   指令 trace 写 `DIR/insn/`。trace 从被调用函数的第一条指令开始，捕获进入时的
-  LR，记到 PC == LR 为止（QBDI nested-VM 的结尾）；hook 覆盖是目标模块，由代码
-  决定，不是 CLI 的 size 参数。
-  区间内的指令才进 `code.log`；区间外的 callee / bionic / linker 不记录，
-  但跳出区间的 `bl/blr` 进 `bl.log`，目标落在 thunk 页时解析成
+  LR，记到 `PC == LR` 为止（QBDI nested-VM 的结尾）；hook 覆盖是目标模块，由
+  代码决定，不是 CLI 的 size 参数。区间内实际执行的指令进 `code.log`；跳出
+  覆盖区间的 `bl/blr` 进 `bl.log`，目标落在 thunk 页时解析成
   `JNIEnv::NewStringUTF` 这类宿主函数名。`rw.log` 的 `w` 条目在指令 POST 阶段
   落盘，hexdump 是写后内容。
 - **地址 hook**（生产构建也编译）：绝对 guest 地址 + 回调；回调在指令执行前
@@ -278,9 +277,16 @@ cmake -S code -B build-asan -G Ninja -DCMAKE_BUILD_TYPE=Debug \
 cmake -S code -B build-trace -G Ninja -DCMAKE_BUILD_TYPE=Release \
       -DDUCKEMU_ENABLE_TRACE=ON
 cmake --build build-trace -j"$(nproc)"
+
+# libeleven：从函数入口记到进入时的 LR
 ./build-trace/user_code/duckemu_libeleven_case --trace /tmp/le_insn 1
-# /tmp/le_insn/svc.log + /tmp/le_insn/insn/{code,bl,rw}.log + threads.tsv;
-# the trace range is the loaded target module's range, computed in code.
+# 京东：Bridge.main 是跳板，hook 覆盖目标模块，结尾同样是 LR
+./build-trace/user_code/duckemu_jdgs_case --trace ./trace_logs/jd
+
+# 产出 DIR/svc.log + DIR/insn/{code,bl,rw}.log + threads.tsv
+# 一次京东 main(101) 实测：code.log 1,171,888 行 / 129 MiB，
+# rw.log 2,155,668 行 / 132 MiB，合计约 261 MiB（约 5.2 s）。
+# trace_logs/ 已在 .gitignore 中。
 ```
 
 当前 47 个测试（生产构建；`DUCKEMU_ENABLE_TRACE=ON` 为 50），按阶段分组：
@@ -296,7 +302,8 @@ cmake --build build-trace -j"$(nproc)"
 - 时钟：`06_clock_injection`
 - 服务化：`07a_instance_host`、`07b_worker_supervisor`、`07c_system_gateway`、
   `07d_session_reset`、`07_end_to_end`、`07e_jdgs_plugin`、`07f_szstone_plugin`
-- 分析面：`08_address_hook`；TRACE=ON 另有 `08_insn_trace`、`08_insn_trace_threads`、`insn_decode_test`
+- 分析面：`08_address_hook`；TRACE=ON 另有 `08_insn_trace`、
+  `08_insn_trace_threads`、`insn_decode_test`
 - 单元：`elf_image_test`、`runtime_memory_test`、`ring_buffer_test`、
   `guest_stack_test`、`svc_trace_format_test`、`protocol_test`、`jni_world_test`、
   `jni_layout_test`、`runtime_clock_test`、`module_missing_dep_test`
@@ -379,7 +386,7 @@ libeleven 很简单（基本是魔改 base64），这组数字只说明链路通
 | M5 JNI | JNIEnv、`RegisterNatives`、严格 Java 环境 | `05_jni_stub` | ✅ |
 | M6 真实目标 | libeleven / 京东 / 得物结果一致 | `06_clock_injection`、`07e_jdgs_plugin`、`07f_szstone_plugin` | ✅ |
 | M7 服务化 | System/Worker/Instance、UDS、warm pool | `07_end_to_end` | ✅ |
-| M8 分析面 | 指令级 trace、绝对地址 hook | `08_insn_trace`、`08_address_hook`、`insn_decode_test` | ✅ |
+| M8 分析面 | 指令级 trace（LR 结尾）、绝对地址 hook | `insn_decode_test`、`08_insn_trace`、`08_insn_trace_threads`、`08_address_hook` | ✅ |
 
 执行规则：一个里程碑 = 一个可 review 的 PR；gate 是测试文件，不是口头结论；
 不提前实现下一阶段的抽象。M6 的 reset 语义由 `07d_session_reset` 覆盖
