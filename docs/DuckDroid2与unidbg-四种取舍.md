@@ -223,7 +223,7 @@ DuckDroid2 的缺点，也同样具体：
 
 - 年轻。真实目标只有 libeleven 和京东两个；syscall、futex、信号、JNI 面都是按踩到的缺口补的。
 - 绑定 ROM。`libc_shared_globals` 偏移、静态 TLS 布局、clone 语义都跟这一个 ROM 走；换 ROM 要重新核对。
-- 面窄。futex 只有 WAIT/WAKE，没有 timeout、`WAIT_BITSET`、PI；信号只留 no-op；动态 TLS/DTV 未实现，`tls_modules` 还是空表；没有 CFI/DWARF 回溯，release so 的 x29 链可能只有一帧。
+- 面窄。futex 只有 WAIT/WAKE，没有 timeout、`WAIT_BITSET`、PI；信号只留 no-op；TLS 已有静态/动态槽、DTV 增长与 dlsym 语义，但 `dlclose` 不卸载；没有 CFI/DWARF 回溯，release so 的 x29 链可能只有一帧。
 - 单核串行。没有抢占，guest 死循环会挂住调用方；服务层只能用 `SIGKILL` 兜底。签名场景够用，但如果目标自己开多线程做 CPU 并行，DuckDroid2 不会更快。
 - 工具链不如 unidbg。没有 inline hook，没有 Dobby/xHook，没有 gdb/IDA stub；要 hook 目标函数，得自己在 GOT/重定位或 guest 代码上做。
 - 每接一个目标要写 C++ 声明。unidbg 的 Java override 更快，尤其在你还不确定目标用了哪些类的时候。
@@ -237,7 +237,7 @@ unidbg 的优点同样明显：覆盖面广、目标多、Java 生态熟悉、�
 
 - **没有同目标性能对拍**。DuckDroid2 的 8176 req/s 是 4 实例、8 连接、libeleven `data(7)` 的结果；unidbg 在同样条件下的数字没有测。谁快、快多少，现在不知道。
 - **信号语义**。目前只有 no-op；`EINTR` 是接口预留，没有真正的信号投递。
-- **动态 TLS/DTV**。所有 `PT_TLS` 按静态槽处理；`__tls_get_addr` 的 DTV 扩容、`dlopen` 后的 TLS 访问没做；`__libc_shared_globals()->tls_modules` 仍是空表，新线程不会复制模块的 `PT_TLS` 初始化镜像。
+- **TLS 卸载**。静态/动态 TLS、DTV 扩容与 dlsym(STT_TLS) 已补齐；`dlclose` 仍是 no-op，模块表条目和 DTV 槽不会因卸载回收，线程退出时才由 libc 释放动态块。
 - **随机数注入**。时间戳能注入了，随机数还没有：`getrandom`（`misc_handlers.cpp:125`）和 `AT_RANDOM`（`shared_globals.cpp:102`）都还是宿主 `std::random_device`。签名服务要完全可复现，这块得做成实例级 `RuntimeRandom`。
 - **指令级 trace / 回放**。现在只有语义级的 `svc.log`，没有指令级 trace，也没有回放器；M2 当时明确推后了。真要做“重放”，这条得先补。
 - **futex 面**。timeout、`WAIT_BITSET`、PI、robust list、requeue 都没有。

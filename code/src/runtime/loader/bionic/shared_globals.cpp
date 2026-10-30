@@ -30,6 +30,24 @@ constexpr uint64_t kEnvironOffset = 0x638;
 constexpr uint64_t kBlockSize = 0x1000;
 constexpr uint64_t kStringsSize = 0x1000;
 
+// libc_shared_globals::tls_modules lives right after StaticTlsLayout:
+//   static_tls_layout at 0x450 (5 words, 0x28 bytes) -> tls_modules at 0x478.
+// Fields on arm64 LP64 (private/bionic_globals.h): generation,
+// generation_libc_so, pthread_rwlock_t (56 bytes), module_count,
+// static_module_count, module_table, callbacks. The counts land at 0x4C0/0x4C8
+// and the table pointer at 0x4D0, which also puts tls_allocator at 0x4F8 and
+// set_target_sdk_version_hook at the already-verified 0x628.
+constexpr uint64_t kTlsModuleCountOffset = 0x478 + 0x48;
+constexpr uint64_t kTlsStaticModuleCountOffset = 0x478 + 0x50;
+constexpr uint64_t kTlsModuleTableOffset = 0x478 + 0x58;
+
+// struct TlsModule (private/bionic_elf_tls.h): TlsSegment {size, alignment,
+// init_ptr, init_size}, static_offset, first_generation, soinfo_ptr.
+constexpr uint64_t kTlsModuleSize = 56;
+constexpr uint64_t kTlsModuleCapacity = 64;
+constexpr uint64_t kTlsStaticSlotNone = ~uint64_t{ 0 };
+constexpr uint64_t kTlsGenerationFirst = 1;
+
 // M1/M4.5 TLS block layout, published through StaticTlsLayout.
 constexpr uint64_t kDefaultTlsSize = 0x4000;
 constexpr uint64_t kBionicTlsOffset = 0x200;
@@ -226,7 +244,11 @@ Result<void> BionicGlobals::initialize()
 	{
 		return written;
 	}
-	if (auto written = writeU64(kTlsGenerationOffset, ~0ULL); !written.ok())
+	// kTlsGenerationFirst, exactly like the linker's TlsModules constructor.
+	// libc's own __libc_tls_generation_copy starts at SIZE_MAX and preinit
+	// copies this value, so the first __tls_get_addr already takes the slow
+	// path until the DTV generation matches.
+	if (auto written = writeU64(kTlsGenerationOffset, kTlsGenerationFirst); !written.ok())
 	{
 		return written;
 	}
@@ -243,6 +265,29 @@ Result<void> BionicGlobals::initialize()
 		return written;
 	}
 	if (auto written = writeU64(kEnvironOffset, environ_address.value()); !written.ok())
+	{
+		return written;
+	}
+
+	// The TlsModule table. libc walks it in __init_static_tls (new threads)
+	// and __tls_get_addr (dynamic TLS), so it must be guest-visible from the
+	// moment libc's pthread code can run.
+	auto module_table = memory_.map(kTlsModuleCapacity * kTlsModuleSize, PermReadWrite, "tls-modules");
+	if (!module_table.ok())
+	{
+		return module_table.error();
+	}
+	tls_module_table_ = module_table.value();
+	tls_module_capacity_ = kTlsModuleCapacity;
+	if (auto written = writeU64(kTlsModuleTableOffset, tls_module_table_.value()); !written.ok())
+	{
+		return written;
+	}
+	if (auto written = writeU64(kTlsModuleCountOffset, 0); !written.ok())
+	{
+		return written;
+	}
+	if (auto written = writeU64(kTlsStaticModuleCountOffset, 0); !written.ok())
 	{
 		return written;
 	}
@@ -274,6 +319,150 @@ void BionicGlobals::setStaticTlsLayout(uint64_t size,
 		tls_bionic_tls_offset_,
 	};
 	(void)memory_.write(GuestVA{ base }, values, sizeof(values));
+}
+
+Result<uint64_t> BionicGlobals::readU64(uint64_t offset) const
+{
+	uint64_t value = 0;
+	auto read = memory_.read(GuestVA{ block_.value() + offset }, &value, sizeof(value));
+	if (!read.ok())
+	{
+		return read.error();
+	}
+	return value;
+}
+
+Result<void> BionicGlobals::bumpTlsGeneration(uint64_t generation)
+{
+	if (auto written = writeU64(kTlsGenerationOffset, generation); !written.ok())
+	{
+		return written;
+	}
+	// preinit stores &__libc_tls_generation_copy here. The linker updates both
+	// copies on every registration; without this, __tls_get_addr's fast path
+	// would keep comparing against the startup generation.
+	auto libc_copy = readU64(kTlsGenerationLibcOffset);
+	if (!libc_copy.ok())
+	{
+		return libc_copy.error();
+	}
+	if (libc_copy.value() == 0)
+	{
+		return {};
+	}
+	return memory_.write(GuestVA{ libc_copy.value() }, &generation, sizeof(generation));
+}
+
+Result<uint64_t> BionicGlobals::addTlsModule(uint32_t module_id, const TlsModuleSpec &spec, bool is_static)
+{
+	if (block_.value() == 0 || tls_module_table_.value() == 0)
+	{
+		return Error{ ErrorCode::Internal, "bionic globals are not initialized" };
+	}
+	if (module_id == 0 || module_id > tls_module_capacity_)
+	{
+		return Error{ ErrorCode::OutOfMemory, "TLS module table is full" };
+	}
+	// bionic indexes the table with module_id - 1 and requires a dense table.
+	if (module_id != tls_module_count_ + 1)
+	{
+		return Error{ ErrorCode::InvalidArgument, "TLS modules must be registered in id order" };
+	}
+	if (is_static)
+	{
+		if (static_tls_finished_)
+		{
+			return Error{ ErrorCode::Internal, "static TLS is already finalized" };
+		}
+		if (tls_static_module_count_ != tls_module_count_ || spec.static_offset == kTlsStaticSlotNone)
+		{
+			return Error{ ErrorCode::InvalidArgument, "static TLS modules must precede dynamic ones" };
+		}
+	}
+	else if (!static_tls_finished_)
+	{
+		return Error{ ErrorCode::Internal, "dynamic TLS module registered before finalize" };
+	}
+
+	const uint64_t generation = ++tls_generation_;
+	const uint64_t entry =
+		tls_module_table_.value() + static_cast<uint64_t>(module_id - 1) * kTlsModuleSize;
+	const uint64_t values[7] = {
+		spec.segment_size,
+		spec.segment_alignment == 0 ? 1 : spec.segment_alignment,
+		spec.init_ptr.value(),
+		spec.init_size,
+		is_static ? spec.static_offset : kTlsStaticSlotNone,
+		generation,
+		spec.soinfo,
+	};
+	if (auto written = memory_.write(GuestVA{ entry }, values, sizeof(values)); !written.ok())
+	{
+		return written.error();
+	}
+
+	tls_module_count_ = module_id;
+	if (is_static)
+	{
+		tls_static_module_count_ = module_id;
+	}
+	// Static registration happens before preinit, so the libc copy is usually
+	// still null here; dynamic registration must update it.
+	if (auto written = bumpTlsGeneration(generation); !written.ok())
+	{
+		abandonTlsModule(module_id);
+		return written.error();
+	}
+	if (auto written = writeU64(kTlsModuleCountOffset, tls_module_count_); !written.ok())
+	{
+		abandonTlsModule(module_id);
+		return written.error();
+	}
+	if (auto written = writeU64(kTlsStaticModuleCountOffset, tls_static_module_count_); !written.ok())
+	{
+		abandonTlsModule(module_id);
+		return written.error();
+	}
+	return generation;
+}
+
+void BionicGlobals::finalizeStaticTls()
+{
+	if (static_tls_finished_ || block_.value() == 0 || tls_module_table_.value() == 0)
+	{
+		return;
+	}
+	static_tls_finished_ = true;
+	// linker_finalize_static_tls(): all modules registered so far are static.
+	tls_static_module_count_ = tls_module_count_;
+	(void)writeU64(kTlsStaticModuleCountOffset, tls_static_module_count_);
+}
+
+void BionicGlobals::abandonTlsModule(uint32_t module_id)
+{
+	if (block_.value() == 0 || tls_module_table_.value() == 0 || module_id == 0 ||
+	    module_id > tls_module_count_)
+	{
+		return;
+	}
+	const uint64_t entry =
+		tls_module_table_.value() + static_cast<uint64_t>(module_id - 1) * kTlsModuleSize;
+	uint64_t static_offset = kTlsStaticSlotNone;
+	(void)memory_.read(GuestVA{ entry + 4 * sizeof(uint64_t) }, &static_offset, sizeof(static_offset));
+
+	// Keep static_offset intact so __init_static_tls still treats the slot as
+	// part of the static prefix (it skips zero init_size); zero everything
+	// else so no image is copied and no dynamic block is allocated.
+	const uint64_t values[7] = {
+		0, // segment.size
+		1, // segment.alignment
+		block_.value(), // segment.init_ptr stays non-null (never dereferenced)
+		0, // segment.init_size
+		static_offset,
+		0, // first_generation: kTlsGenerationNone
+		0, // soinfo_ptr
+	};
+	(void)memory_.write(GuestVA{ entry }, values, sizeof(values));
 }
 
 } // namespace duckemu::runtime::loader

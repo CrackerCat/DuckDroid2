@@ -43,9 +43,12 @@ struct Module
 
 	ElfTlsTemplate tls;
 	bool has_tls = false;
-	int64_t tls_offset = 0;        // relative to the thread pointer
+	int64_t tls_offset = 0;        // relative to the thread pointer (static only)
 	uint32_t tls_module_id = 0;    // 1-based, for DTPMOD64 / DTV
-	bool tls_static = false;       // M4.5 treats every PT_TLS module as static
+	bool tls_static = false;       // false after linker_finalize_static_tls
+	// Generation in which this module was registered. A dynamic TLSDESC
+	// descriptor carries it so the resolver can detect an outdated DTV.
+	uint64_t tls_first_generation = 0;
 
 	GuestVA init_function;
 	GuestVA init_array;

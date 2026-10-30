@@ -108,6 +108,30 @@ add_custom_command(
     COMMENT "Building guest .so libtls.so (TLSDESC)")
 
 add_custom_command(
+    OUTPUT "${DUCKEMU_SO_BUILD_DIR}/libtlsdtv.so"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${DUCKEMU_SO_BUILD_DIR}"
+    COMMAND ${DUCKEMU_CLANG_EXECUTABLE} ${DUCKEMU_GUEST_SO_FLAGS}
+            -fno-stack-protector
+            -Wl,-soname,libtlsdtv.so "${DUCKEMU_SO_SOURCE_DIR}/libtlsdtv.c"
+            -o "${DUCKEMU_SO_BUILD_DIR}/libtlsdtv.so"
+    DEPENDS "${DUCKEMU_SO_SOURCE_DIR}/libtlsdtv.c"
+    COMMENT "Building guest .so libtlsdtv.so (dynamic TLS/DTV)")
+
+# The same source with DT_NEEDED libc.so, so it can be loaded before libc in
+# one graph and receive a static TLS slot. It links against the link-only stub
+# purely to record the dependency; the runtime resolves libc.so to the ROM.
+add_custom_command(
+    OUTPUT "${DUCKEMU_SO_BUILD_DIR}/libtlsdtv_static.so"
+    COMMAND ${DUCKEMU_CLANG_EXECUTABLE} ${DUCKEMU_GUEST_SO_FLAGS}
+            -fno-stack-protector
+            -Wl,-soname,libtlsdtv_static.so "${DUCKEMU_SO_SOURCE_DIR}/libtlsdtv.c"
+            -o "${DUCKEMU_SO_BUILD_DIR}/libtlsdtv_static.so"
+            -L"${DUCKEMU_SO_BUILD_DIR}" -Wl,--no-as-needed -l:libc.so
+    DEPENDS "${DUCKEMU_SO_SOURCE_DIR}/libtlsdtv.c"
+            "${DUCKEMU_SO_BUILD_DIR}/libc.so"
+    COMMENT "Building guest .so libtlsdtv_static.so (static TLS slot)")
+
+add_custom_command(
     OUTPUT "${DUCKEMU_SO_BUILD_DIR}/libmissing.so"
     COMMAND ${DUCKEMU_CLANG_EXECUTABLE} ${DUCKEMU_GUEST_SO_FLAGS}
             -Wl,-soname,libmissing.so "${DUCKEMU_SO_SOURCE_DIR}/libmissing.c"
@@ -191,6 +215,8 @@ add_custom_command(
            "${DUCKEMU_SO_RUNTIME_DIR}/libb.so"
            "${DUCKEMU_SO_RUNTIME_DIR}/libmissing.so"
            "${DUCKEMU_SO_RUNTIME_DIR}/libtls.so"
+           "${DUCKEMU_SO_RUNTIME_DIR}/libtlsdtv.so"
+           "${DUCKEMU_SO_RUNTIME_DIR}/static/libtlsdtv_static.so"
            "${DUCKEMU_SO_RUNTIME_DIR}/libplug.so"
            "${DUCKEMU_SO_RUNTIME_DIR}/libdlcaller.so"
            "${DUCKEMU_SO_RUNTIME_DIR}/libfd.so"
@@ -207,6 +233,12 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${DUCKEMU_SO_BUILD_DIR}/libtls.so" "${DUCKEMU_SO_RUNTIME_DIR}/libtls.so"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${DUCKEMU_SO_BUILD_DIR}/libtlsdtv.so" "${DUCKEMU_SO_RUNTIME_DIR}/libtlsdtv.so"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${DUCKEMU_SO_RUNTIME_DIR}/static"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${DUCKEMU_SO_BUILD_DIR}/libtlsdtv_static.so"
+            "${DUCKEMU_SO_RUNTIME_DIR}/static/libtlsdtv_static.so"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${DUCKEMU_SO_BUILD_DIR}/libplug.so" "${DUCKEMU_SO_RUNTIME_DIR}/libplug.so"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${DUCKEMU_SO_BUILD_DIR}/libdlcaller.so" "${DUCKEMU_SO_RUNTIME_DIR}/libdlcaller.so"
@@ -222,6 +254,8 @@ add_custom_command(
             "${DUCKEMU_SO_BUILD_DIR}/libb.so"
             "${DUCKEMU_SO_BUILD_DIR}/libmissing.so"
             "${DUCKEMU_SO_BUILD_DIR}/libtls.so"
+            "${DUCKEMU_SO_BUILD_DIR}/libtlsdtv.so"
+            "${DUCKEMU_SO_BUILD_DIR}/libtlsdtv_static.so"
             "${DUCKEMU_SO_BUILD_DIR}/libplug.so"
             "${DUCKEMU_SO_BUILD_DIR}/libdlcaller.so"
             "${DUCKEMU_SO_BUILD_DIR}/libfd.so"
@@ -234,6 +268,8 @@ add_custom_target(guest_so ALL
             "${DUCKEMU_SO_RUNTIME_DIR}/libb.so"
             "${DUCKEMU_SO_RUNTIME_DIR}/libmissing.so"
             "${DUCKEMU_SO_RUNTIME_DIR}/libtls.so"
+            "${DUCKEMU_SO_RUNTIME_DIR}/libtlsdtv.so"
+            "${DUCKEMU_SO_RUNTIME_DIR}/static/libtlsdtv_static.so"
             "${DUCKEMU_SO_RUNTIME_DIR}/libplug.so"
             "${DUCKEMU_SO_RUNTIME_DIR}/libdlcaller.so"
             "${DUCKEMU_SO_RUNTIME_DIR}/libfd.so"
@@ -563,6 +599,20 @@ target_compile_definitions(04c_bionic PRIVATE
 add_test(NAME 04c_bionic COMMAND 04c_bionic)
 set_tests_properties(04c_bionic PROPERTIES TIMEOUT 120)
 duckemu_set_warnings(04c_bionic)
+
+# TLS/DTV full semantics: static slot in the startup graph (libc copies the
+# image into new threads), dynamic TLSDESC + DTV growth for dlopen modules.
+add_executable(04n_tls_dtv integration/04n_tls_dtv.cpp)
+target_link_libraries(04n_tls_dtv PRIVATE duckemu_runtime duckemu_test_support)
+target_compile_definitions(04n_tls_dtv PRIVATE
+  DUCKEMU_SO_DIR="${DUCKEMU_SO_RUNTIME_DIR}"
+  DUCKEMU_SO_STATIC_DIR="${DUCKEMU_SO_RUNTIME_DIR}/static"
+  DUCKEMU_ROM_BOOTSTRAP="${DUCKEMU_ROM_BOOTSTRAP}"
+  DUCKEMU_ROM_LIB64="${DUCKEMU_ROM_LIB64}")
+add_dependencies(04n_tls_dtv guest_so)
+add_test(NAME 04n_tls_dtv COMMAND 04n_tls_dtv)
+set_tests_properties(04n_tls_dtv PROPERTIES TIMEOUT 120)
+duckemu_set_warnings(04n_tls_dtv)
 
 # Regression: an unresolved DT_NEEDED takes the loader's failure path, which
 # used to read the Module after erasing it.

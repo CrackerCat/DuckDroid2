@@ -297,7 +297,7 @@ std::optional<HostStub> VirtualBionic::makeDlStub(std::string_view symbol)
 				recordError(*state, "dlsym: unreadable symbol");
 				return 0;
 			}
-			auto found = state->service->symbol(args.x[0], text.value());
+			auto found = state->service->symbol(args.x[0], text.value(), args.thread_pointer, args.call_guest);
 			if (!found.ok())
 			{
 				recordError(*state, found.error().message);

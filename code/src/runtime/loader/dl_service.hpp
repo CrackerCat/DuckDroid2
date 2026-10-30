@@ -50,8 +50,14 @@ class DlService
 		const GuestCall &call_guest) = 0;
 
 	// dlsym. Handle 0 is RTLD_DEFAULT, kMainProgramHandle is dlopen(NULL);
-	// both search every loaded module.
-	virtual Result<GuestVA> symbol(uint64_t handle, std::string_view name) = 0;
+	// both search every loaded module. For an STT_TLS definition bionic
+	// returns the calling thread's copy (allocating a dynamic block on first
+	// use), which is why the live thread pointer and guest call path are
+	// threaded through here.
+	virtual Result<GuestVA> symbol(uint64_t handle,
+		std::string_view name,
+		uint64_t thread_pointer,
+		const GuestCall &call_guest) = 0;
 
 	// dladdr. Returns false when `address` belongs to no loaded module.
 	virtual bool address(uint64_t address,

@@ -3,6 +3,7 @@
 
 #include <utility>
 
+#include "common/log/logger.hpp"
 #include "runtime/backend/unicorn/unicorn_backend.hpp"
 #include "runtime/clock/runtime_clock.hpp"
 #include "runtime/jni/env/jni_state.hpp"
@@ -74,6 +75,7 @@ struct RuntimeInstance::Impl : loader::DlService
 	uint64_t stack_top = 0;
 	GuestVA return_trap;
 	GuestVA ifunc_arg; // guest __ifunc_arg_t, allocated on first IFUNC resolution
+	GuestVA tls_index_scratch; // TlsIndex used by dlsym of dynamic TLS symbols
 	// libdl's __cfi_slowpath indexes a process-wide shadow table through
 	// shadow_base_storage. The real linker allocates it and calls __cfi_init;
 	// without that the table base stays 0 and every checked indirect call
@@ -107,7 +109,29 @@ struct RuntimeInstance::Impl : loader::DlService
 	Result<uint64_t> open(std::string_view name,
 		uint64_t caller_address,
 		const GuestCall &call_guest) override;
-	Result<GuestVA> symbol(uint64_t handle, std::string_view name) override;
+
+	// Host side of bionic's tlsdesc_resolver_dynamic. Called through the thunk
+	// table with x0 = &TlsDescriptor, and returns the TP-relative offset that
+	// the TLSDESC caller adds to TP.
+	int64_t resolveDynamicTls(HostCallArgs &args);
+	Result<GuestVA> symbol(uint64_t handle,
+		std::string_view name,
+		uint64_t thread_pointer,
+		const GuestCall &call_guest) override;
+
+	// dlsym of an STT_TLS symbol: static modules have a fixed TP-relative
+	// slot; dynamic ones may need the DTV slow path to allocate this thread's
+	// block first.
+	Result<GuestVA> resolveTlsAddress(const loader::Module &owner,
+		uint64_t value,
+		uint64_t thread_pointer,
+		const GuestCall &call_guest);
+	Result<GuestVA> ensureTlsIndexScratch();
+
+	// Closes the static TLS prefix once the real libc (identified by its
+	// __tls_get_addr export) is part of the graph, then publishes the final
+	// StaticTlsLayout. Both the host loadLibrary path and guest dlopen use it.
+	void finalizeStaticTlsIfReady();
 	bool address(uint64_t address,
 		loader::DlModuleInfo &module,
 		std::string &symbol_name,
@@ -188,6 +212,11 @@ Result<uint64_t> RuntimeInstance::Impl::open(std::string_view name,
 		}
 	}
 
+	// A guest dlopen can be the first thing that brings in the real libc. Its
+	// preinit allocates the thread TLS from StaticTlsLayout, so publish the
+	// finalized layout before any constructor of this graph runs.
+	finalizeStaticTlsIfReady();
+
 	for (const loader::Initializer &initializer : modules->takeInitializers())
 	{
 		auto called = call_guest(initializer.function, {});
@@ -201,13 +230,186 @@ Result<uint64_t> RuntimeInstance::Impl::open(std::string_view name,
 	return loaded.value();
 }
 
-Result<GuestVA> RuntimeInstance::Impl::symbol(uint64_t handle, std::string_view name)
+int64_t RuntimeInstance::Impl::resolveDynamicTls(HostCallArgs &args)
 {
-	if (handle == 0 || handle == loader::kMainProgramHandle)
+	// The compiler's TLSDESC sequence loads the descriptor's func into x1 and
+	// calls it with x0 = &descriptor. The descriptor argument points at
+	// TlsDynamicResolverArg { generation, { module_id, offset } }.
+	const uint64_t descriptor = args.x[0];
+	uint64_t arg = 0;
+	if (!memory.read(GuestVA{ descriptor + 8 }, &arg, sizeof(arg)).ok() || arg == 0)
 	{
-		return modules->lookupGlobal(name);
+		DUCKEMU_ERROR("dynamic tlsdesc: unreadable descriptor at 0x%llx",
+			static_cast<unsigned long long>(descriptor));
+		return 0;
 	}
-	return modules->lookup(handle, name);
+
+	uint64_t generation = 0;
+	uint64_t module_id = 0;
+	uint64_t offset = 0;
+	if (!memory.read(GuestVA{ arg }, &generation, sizeof(generation)).ok() ||
+	    !memory.read(GuestVA{ arg + 8 }, &module_id, sizeof(module_id)).ok() ||
+	    !memory.read(GuestVA{ arg + 16 }, &offset, sizeof(offset)).ok())
+	{
+		DUCKEMU_ERROR("dynamic tlsdesc: unreadable argument at 0x%llx",
+			static_cast<unsigned long long>(arg));
+		return 0;
+	}
+
+	const uint64_t thread_pointer = args.thread_pointer;
+	uint64_t dtv_generation = 0;
+	if (thread_pointer != 0 &&
+	    memory.read(GuestVA{ thread_pointer }, &dtv_generation, sizeof(dtv_generation)).ok() &&
+	    dtv_generation != 0)
+	{
+		uint64_t current_generation = 0;
+		uint64_t module_pointer = 0;
+		// bionic's fast path: current >= module generation and the DTV slot is
+		// live. modules[] starts one word after the generation field, and the
+		// id is 1-based, so modules[id] is at generation + id * 8.
+		if (memory.read(GuestVA{ dtv_generation }, &current_generation, sizeof(current_generation)).ok() &&
+		    current_generation >= generation && module_id != 0 &&
+		    memory.read(GuestVA{ dtv_generation + module_id * sizeof(uint64_t) },
+			    &module_pointer,
+			    sizeof(module_pointer))
+			    .ok() &&
+		    module_pointer != 0)
+		{
+			return static_cast<int64_t>(module_pointer + offset - thread_pointer);
+		}
+	}
+
+	// Slow path: libc's __tls_get_addr owns DTV growth, dynamic-block
+	// allocation (through tls_allocator) and image copying. Run it nested on
+	// this thread; TlsIndex is already at arg + 8.
+	if (!args.call_guest)
+	{
+		DUCKEMU_ERROR("dynamic tlsdesc: no guest call path");
+		return 0;
+	}
+	auto tls_get_addr = modules->lookupGlobal("__tls_get_addr");
+	if (!tls_get_addr.ok())
+	{
+		DUCKEMU_ERROR("dynamic tlsdesc: __tls_get_addr is not loaded");
+		return 0;
+	}
+	auto called = args.call_guest(tls_get_addr.value(), { arg + 8 });
+	if (!called.ok())
+	{
+		DUCKEMU_ERROR("dynamic tlsdesc: __tls_get_addr failed: %s", called.error().message.c_str());
+		return 0;
+	}
+	return called.value() - static_cast<int64_t>(thread_pointer);
+}
+
+void RuntimeInstance::Impl::finalizeStaticTlsIfReady()
+{
+	if (modules->staticTlsFinalized() || !modules->lookupGlobal("__tls_get_addr").ok())
+	{
+		return;
+	}
+	modules->finalizeStaticTls();
+	bionic_globals->setStaticTlsLayout(modules->tlsLayout().paddedSize(),
+		modules->tlsLayout().alignment(),
+		0,
+		tls->bionicTlsOffset());
+}
+
+Result<GuestVA> RuntimeInstance::Impl::symbol(uint64_t handle,
+	std::string_view name,
+	uint64_t thread_pointer,
+	const GuestCall &call_guest)
+{
+	auto resolved = (handle == 0 || handle == loader::kMainProgramHandle) ?
+				modules->lookupGlobalResolved(name) :
+				modules->lookupResolved(handle, name);
+	if (!resolved.ok())
+	{
+		return resolved.error();
+	}
+	const loader::ResolvedSymbol &symbol = resolved.value();
+	constexpr uint8_t kSttTls = 6;
+	if (symbol.type == kSttTls && symbol.owner != nullptr)
+	{
+		// dlsym returns the calling thread's copy, not module.base + st_value.
+		return resolveTlsAddress(*symbol.owner, symbol.value, thread_pointer, call_guest);
+	}
+	return symbol.address;
+}
+
+Result<GuestVA> RuntimeInstance::Impl::ensureTlsIndexScratch()
+{
+	if (tls_index_scratch.value() != 0)
+	{
+		return tls_index_scratch;
+	}
+	auto page = memory.map(kGuestPageSize, PermReadWrite, "tls-index");
+	if (!page.ok())
+	{
+		return page.error();
+	}
+	tls_index_scratch = page.value();
+	return tls_index_scratch;
+}
+
+Result<GuestVA> RuntimeInstance::Impl::resolveTlsAddress(const loader::Module &owner,
+	uint64_t value,
+	uint64_t thread_pointer,
+	const GuestCall &call_guest)
+{
+	if (owner.tls_static)
+	{
+		return GuestVA{ thread_pointer + static_cast<uint64_t>(owner.tls_offset) + value };
+	}
+
+	// Fast path mirrors the TLSDESC resolver: a live DTV slot for this module
+	// already exists in the calling thread.
+	uint64_t generation_pointer = 0;
+	if (thread_pointer != 0 &&
+	    memory.read(GuestVA{ thread_pointer }, &generation_pointer, sizeof(generation_pointer)).ok() &&
+	    generation_pointer != 0)
+	{
+		uint64_t current_generation = 0;
+		uint64_t module_pointer = 0;
+		if (memory.read(GuestVA{ generation_pointer }, &current_generation, sizeof(current_generation)).ok() &&
+		    current_generation >= owner.tls_first_generation &&
+		    memory.read(GuestVA{ generation_pointer + owner.tls_module_id * sizeof(uint64_t) },
+			    &module_pointer,
+			    sizeof(module_pointer))
+			    .ok() &&
+		    module_pointer != 0)
+		{
+			return GuestVA{ module_pointer + value };
+		}
+	}
+
+	// bionic's get_tls_block_for_this_thread(should_alloc=true).
+	if (!call_guest)
+	{
+		return Error{ ErrorCode::Unsupported,
+			"dlsym of a dynamic TLS symbol needs a guest call path" };
+	}
+	auto scratch = ensureTlsIndexScratch();
+	if (!scratch.ok())
+	{
+		return scratch.error();
+	}
+	const uint64_t index[2] = { owner.tls_module_id, value };
+	if (auto written = memory.write(scratch.value(), index, sizeof(index)); !written.ok())
+	{
+		return written.error();
+	}
+	auto tls_get_addr = modules->lookupGlobal("__tls_get_addr");
+	if (!tls_get_addr.ok())
+	{
+		return tls_get_addr.error();
+	}
+	auto called = call_guest(tls_get_addr.value(), { scratch.value().value() });
+	if (!called.ok())
+	{
+		return called.error();
+	}
+	return GuestVA{ static_cast<uint64_t>(called.value()) };
 }
 
 bool RuntimeInstance::Impl::address(uint64_t address,
@@ -357,6 +559,17 @@ Result<std::unique_ptr<RuntimeInstance> > RuntimeInstance::create(const RuntimeC
 		config.enable_test_import_stubs);
 	impl->modules->setBionicGlobals(impl->bionic_globals.get());
 	impl->modules->setDlService(impl.get());
+
+	// bionic's tlsdesc_resolver_dynamic is linker code; the virtual linker
+	// implements it as a host thunk so a dynamic TLSDESC can fall back to the
+	// real libc __tls_get_addr without emitting resolver assembly.
+	auto dynamic_tlsdesc = impl->thunks->add("tlsdesc-dynamic",
+		[state = impl.get()](HostCallArgs &args) { return state->resolveDynamicTls(args); });
+	if (!dynamic_tlsdesc.ok())
+	{
+		return dynamic_tlsdesc.error();
+	}
+	impl->modules->setDynamicTlsDescResolver(dynamic_tlsdesc.value());
 
 	// Properties are data files under /dev/__properties__; bionic's own
 	// preinit reads them when the module graph loads, so no guest entry point
@@ -614,8 +827,11 @@ Result<uint64_t> RuntimeInstance::loadLibrary(std::string_view path)
 		}
 	}
 
-	// preinit reads StaticTlsLayout through __libc_shared_globals; publish the
-	// loader's final layout before any constructor runs.
+	// preinit reads StaticTlsLayout through __libc_shared_globals and
+	// __libc_init_main_thread_final allocates the real main-thread block from
+	// it, so the startup graph must be complete and closed here:
+	// linker_finalize_static_tls() makes every later dlopen module dynamic.
+	impl_->finalizeStaticTlsIfReady();
 	impl_->bionic_globals->setStaticTlsLayout(impl_->modules->tlsLayout().paddedSize(),
 		impl_->modules->tlsLayout().alignment(),
 		0,

@@ -11,9 +11,11 @@
 #include <elf.h>
 
 #include "common/log/logger.hpp"
+#include "runtime/loader/bionic/shared_globals.hpp"
 #include "runtime/memory/address_space.hpp"
 #include "runtime/memory/thunk/thunk_table.hpp"
 #include "runtime/observer/event_bus.hpp"
+#include "runtime/threads/tls/tls_layout_android13.hpp"
 
 namespace duckemu::runtime::loader
 {
@@ -164,18 +166,6 @@ Result<Module *> ModuleLoader::loadImage(const std::string &path, ElfImage parse
 	module.tls = elf.tls();
 	module.has_tls = elf.tls().present;
 
-	if (module.has_tls && module.tls.memsz != 0)
-	{
-		auto offset = tls_layout_.reserve(module.tls.memsz, module.tls.align);
-		if (!offset.ok())
-		{
-			return offset.error();
-		}
-		module.tls_offset = offset.value();
-		module.tls_module_id = next_tls_module_id_++;
-		module.tls_static = true;
-	}
-
 	if (auto mapped = mapSegments(module, elf); !mapped.ok())
 	{
 		return mapped.error();
@@ -203,29 +193,101 @@ Result<Module *> ModuleLoader::loadImage(const std::string &path, ElfImage parse
 		events_->publishModule(std::move(event));
 	}
 
-	// M4.5 does not execute guest code, but the initial thread block must
-	// already carry the module's TLS image for any later call.
-	if (registered.has_tls && tls_sink_ && registered.tls.filesz != 0)
+	// A PT_TLS module joins the guest-visible TlsModules table before any
+	// relocation (TLSDESC descriptors carry its module id and generation).
+	// Modules loaded before linker_finalize_static_tls get a static slot;
+	// later ones are dynamic and are allocated lazily in each thread's DTV by
+	// libc's __tls_get_addr.
+	if (registered.has_tls)
 	{
-		const ElfTlsTemplate &tls = registered.tls;
-		if (tls.offset > elf.bytes().size() || tls.filesz > elf.bytes().size() - tls.offset)
+		if (globals_ == nullptr)
 		{
-			// erase() destroys the Module: copy what the error message needs
-			// before it is gone.
-			const std::string soname = registered.soname;
 			unmapSegments(registered);
 			registry_.erase(registered.handle);
-			return Error{ ErrorCode::InvalidArgument, soname + ": PT_TLS image is out of bounds" };
+			return Error{ ErrorCode::Internal,
+				registered.soname + ": PT_TLS module without shared globals" };
 		}
-		auto materialized = tls_sink_(registered.tls_offset,
-			elf.bytes().data() + tls.offset,
-			tls.filesz,
-			tls.memsz);
-		if (!materialized.ok())
+
+		registered.tls_static = !static_tls_finished_;
+		// bionic caps TLS alignment at one page and rejects non-power-of-two
+		// segments; __tls_get_addr later passes it straight to memalign().
+		uint64_t tls_alignment = registered.tls.align == 0 ? 1 : registered.tls.align;
+		if ((tls_alignment & (tls_alignment - 1)) != 0)
 		{
 			unmapSegments(registered);
 			registry_.erase(registered.handle);
-			return materialized.error();
+			return Error{ ErrorCode::InvalidArgument,
+				registered.soname + ": invalid TLS segment alignment" };
+		}
+		tls_alignment = std::min<uint64_t>(tls_alignment, kGuestPageSize);
+
+		if (registered.tls_static)
+		{
+			auto offset = tls_layout_.reserve(registered.tls.memsz, tls_alignment);
+			if (!offset.ok())
+			{
+				unmapSegments(registered);
+				registry_.erase(registered.handle);
+				return offset.error();
+			}
+			registered.tls_offset = offset.value();
+		}
+		else
+		{
+			registered.tls_offset = 0;
+		}
+
+		TlsModuleSpec spec;
+		spec.segment_size = registered.tls.memsz;
+		spec.segment_alignment = tls_alignment;
+		spec.init_ptr = GuestVA{ registered.base + registered.tls.vaddr };
+		spec.init_size = registered.tls.filesz;
+		spec.static_offset = registered.tls_static ?
+					     static_cast<uint64_t>(registered.tls_offset +
+								   tls::android13::kThreadPointerOffset) :
+					     ~uint64_t{ 0 };
+		spec.soinfo = registered.base;
+
+		const uint32_t module_id = next_tls_module_id_;
+		auto generation = globals_->addTlsModule(module_id, spec, registered.tls_static);
+		if (!generation.ok())
+		{
+			unmapSegments(registered);
+			registry_.erase(registered.handle);
+			return generation.error();
+		}
+		registered.tls_module_id = module_id;
+		registered.tls_first_generation = generation.value();
+		++next_tls_module_id_;
+
+		// The bootstrap main-thread block predates libc's thread machinery.
+		// Static images go into it now; libc's final mapping and every later
+		// thread copy from the table instead. Dynamic modules are materialized
+		// by the DTV slow path on first access.
+		if (registered.tls_static && tls_sink_ && registered.tls.filesz != 0)
+		{
+			const ElfTlsTemplate &tls = registered.tls;
+			if (tls.offset > elf.bytes().size() || tls.filesz > elf.bytes().size() - tls.offset)
+			{
+				// erase() destroys the Module: copy what the error message needs
+				// before it is gone.
+				const std::string soname = registered.soname;
+				globals_->abandonTlsModule(module_id);
+				unmapSegments(registered);
+				registry_.erase(registered.handle);
+				return Error{ ErrorCode::InvalidArgument, soname + ": PT_TLS image is out of bounds" };
+			}
+			auto materialized = tls_sink_(registered.tls_offset,
+				elf.bytes().data() + tls.offset,
+				tls.filesz,
+				tls.memsz);
+			if (!materialized.ok())
+			{
+				globals_->abandonTlsModule(module_id);
+				unmapSegments(registered);
+				registry_.erase(registered.handle);
+				return materialized.error();
+			}
 		}
 	}
 
@@ -277,6 +339,10 @@ Result<Module *> ModuleLoader::loadImage(const std::string &path, ElfImage parse
 			// before erase() destroys the Module.
 			const std::string message =
 				registered.soname + ": cannot load dependency " + needed + ": " + detail;
+			if (registered.has_tls)
+			{
+				globals_->abandonTlsModule(registered.tls_module_id);
+			}
 			unmapSegments(registered);
 			registry_.erase(registered.handle);
 			return Error{ ErrorCode::NotFound, message };
@@ -285,6 +351,10 @@ Result<Module *> ModuleLoader::loadImage(const std::string &path, ElfImage parse
 
 	if (auto applied = relocations_.apply(registered, elf); !applied.ok())
 	{
+		if (registered.has_tls)
+		{
+			globals_->abandonTlsModule(registered.tls_module_id);
+		}
 		unmapSegments(registered);
 		registry_.erase(registered.handle);
 		return applied.error();
@@ -299,6 +369,10 @@ Result<Module *> ModuleLoader::loadImage(const std::string &path, ElfImage parse
 		auto phdr = memory_.map(phdr_size, PermRead, "phdr:" + registered.soname);
 		if (!phdr.ok())
 		{
+			if (registered.has_tls)
+			{
+				globals_->abandonTlsModule(registered.tls_module_id);
+			}
 			unmapSegments(registered);
 			registry_.erase(registered.handle);
 			return phdr.error();
@@ -309,6 +383,10 @@ Result<Module *> ModuleLoader::loadImage(const std::string &path, ElfImage parse
 		if (!written.ok())
 		{
 			memory_.unmap(phdr.value(), phdr_size);
+			if (registered.has_tls)
+			{
+				globals_->abandonTlsModule(registered.tls_module_id);
+			}
 			unmapSegments(registered);
 			registry_.erase(registered.handle);
 			return written.error();
@@ -495,6 +573,19 @@ void ModuleLoader::collectInitializers(Module &module)
 	}
 }
 
+void ModuleLoader::finalizeStaticTls()
+{
+	if (static_tls_finished_)
+	{
+		return;
+	}
+	static_tls_finished_ = true;
+	if (globals_ != nullptr)
+	{
+		globals_->finalizeStaticTls();
+	}
+}
+
 std::vector<Initializer> ModuleLoader::takeInitializers()
 {
 	std::vector<Initializer> drained;
@@ -527,6 +618,55 @@ Result<GuestVA> ModuleLoader::lookupGlobal(std::string_view symbol) const
 		if (!module->is_virtual && SymbolResolver::findDefined(*module, symbol, address))
 		{
 			return address;
+		}
+	}
+	return Error{ ErrorCode::NotFound, "no loaded module exports '" + std::string(symbol) + "'" };
+}
+
+Result<ResolvedSymbol> ModuleLoader::lookupResolved(uint64_t handle, std::string_view symbol) const
+{
+	const Module *module = registry_.findByHandle(handle);
+	if (module == nullptr)
+	{
+		return Error{ ErrorCode::NotFound, "unknown module handle" };
+	}
+	if (module->is_virtual)
+	{
+		auto address = resolver_.lookupExported(*module, symbol);
+		if (!address.ok())
+		{
+			return address.error();
+		}
+		return ResolvedSymbol{ address.value(), nullptr, true, 0, 0 };
+	}
+	const ElfSymbol *definition = SymbolResolver::findDefinition(*module, symbol);
+	if (definition == nullptr)
+	{
+		return Error{ ErrorCode::NotFound,
+			module->soname + " does not export '" + std::string(symbol) + "'" };
+	}
+	return ResolvedSymbol{ GuestVA{ module->base + definition->value },
+		const_cast<Module *>(module),
+		false,
+		definition->type(),
+		definition->value };
+}
+
+Result<ResolvedSymbol> ModuleLoader::lookupGlobalResolved(std::string_view symbol) const
+{
+	for (const auto &module : registry_.modules())
+	{
+		if (module->is_virtual)
+		{
+			continue;
+		}
+		if (const ElfSymbol *definition = SymbolResolver::findDefinition(*module, symbol))
+		{
+			return ResolvedSymbol{ GuestVA{ module->base + definition->value },
+				module.get(),
+				false,
+				definition->type(),
+				definition->value };
 		}
 	}
 	return Error{ ErrorCode::NotFound, "no loaded module exports '" + std::string(symbol) + "'" };

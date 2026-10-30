@@ -133,8 +133,8 @@ thunk / SVC 回到宿主 C++。
 ## 尚未实现
 
 - **信号语义**：只有 no-op；`EINTR` 是接口预留，没有真正的信号投递。
-- **动态 TLS/DTV**：所有 `PT_TLS` 按静态槽处理；`__tls_get_addr` 的 DTV 扩容、
-  `dlopen` 后新增 TLS 的完整语义没做；线程块放不下时按 bionic 语义失败。
+- **TLS 卸载语义**：静态/动态 TLS、DTV 扩容与 dlsym(STT_TLS) 已按 bionic 实现；
+  `dlclose` 仍是 no-op，模块表与 DTV 槽不会因卸载回收。
 - **futex 面**：`WAIT_BITSET`、PI、robust list、requeue 都没有（普通 WAIT/WAKE 的
   timespec 超时已支持）。
 - **目录 fd 与 `getdents64`**：`opendir/readdir` 还不可用；合成挂载的子项枚举也

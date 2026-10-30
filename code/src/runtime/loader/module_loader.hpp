@@ -67,6 +67,12 @@ class ModuleLoader
 	[[nodiscard]] Result<GuestVA> lookup(uint64_t handle, std::string_view symbol) const;
 	[[nodiscard]] Result<GuestVA> lookupGlobal(std::string_view symbol) const;
 
+	// Same scopes, but keeps the definition's STT_* type and st_value. dlsym
+	// needs both for STT_TLS, whose result is a thread-local address rather
+	// than module.base + st_value.
+	[[nodiscard]] Result<ResolvedSymbol> lookupResolved(uint64_t handle, std::string_view symbol) const;
+	[[nodiscard]] Result<ResolvedSymbol> lookupGlobalResolved(std::string_view symbol) const;
+
 	[[nodiscard]] const ModuleRegistry &registry() const
 	{
 		return registry_;
@@ -99,7 +105,30 @@ class ModuleLoader
 
 	void setBionicGlobals(BionicGlobals *globals)
 	{
+		globals_ = globals;
 		virtuals_.setBionicGlobals(globals);
+	}
+
+	// Guest address of the host thunk that implements bionic's
+	// tlsdesc_resolver_dynamic. The loader writes it into TLSDESC descriptors
+	// of modules that are not part of the static TLS block.
+	void setDynamicTlsDescResolver(GuestVA resolver)
+	{
+		relocations_.setDynamicTlsDescResolver(resolver);
+	}
+
+	// linker_finalize_static_tls(): the startup graph is complete. Modules
+	// loaded afterwards get dynamic TLS (DTV) instead of a static slot.
+	void finalizeStaticTls();
+
+	[[nodiscard]] bool staticTlsFinalized() const
+	{
+		return static_tls_finished_;
+	}
+
+	[[nodiscard]] const BionicGlobals *bionicGlobals() const
+	{
+		return globals_;
 	}
 
 	// Backs the __loader_dl* entry points. Set once the facade exists.
@@ -128,7 +157,9 @@ class ModuleLoader
 	RelocApplier relocations_;
 	TlsLayout tls_layout_;
 	uint32_t next_tls_module_id_ = 1;
+	bool static_tls_finished_ = false;
 	TlsTemplateSink tls_sink_;
+	BionicGlobals *globals_ = nullptr;
 	std::vector<Initializer> initializers_;
 	uint64_t next_base_;
 };

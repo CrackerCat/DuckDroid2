@@ -46,6 +46,13 @@ class RelocApplier
 
 	Result<void> apply(Module &module, const ElfImage &image);
 
+	// bionic's tlsdesc_resolver_dynamic, implemented as a host thunk. The
+	// descriptor is {func, arg} and arg points at a TlsDynamicResolverArg.
+	void setDynamicTlsDescResolver(GuestVA resolver)
+	{
+		tlsdesc_dynamic_ = resolver;
+	}
+
     private:
 	struct TlsReference
 	{
@@ -60,6 +67,7 @@ class RelocApplier
 		const ElfSymbol *symbol,
 		bool weak_reference) const;
 	Result<void> ensureTlsDescStubs();
+	Result<GuestVA> allocateTlsDescArg(uint64_t generation, uint64_t module_id, uint64_t offset);
 
 	RuntimeMemory &memory_;
 	const SymbolResolver &resolver_;
@@ -68,7 +76,12 @@ class RelocApplier
 
 	GuestVA tlsdesc_static_{};
 	GuestVA tlsdesc_weak_{};
+	GuestVA tlsdesc_dynamic_{};
 	bool tlsdesc_ready_ = false;
+	// TlsDynamicResolverArg objects: 24 bytes each, referenced by dynamic
+	// TLSDESC descriptors for the lifetime of the module.
+	GuestVA tlsdesc_arg_cursor_{};
+	GuestVA tlsdesc_arg_end_{};
 };
 
 } // namespace duckemu::runtime::loader

@@ -206,7 +206,17 @@ Result<void> RelocApplier::applyOne(Module &module, const ElfRelocation &relocat
 		{
 			if (reference.weak)
 			{
-				return writeValue(0);
+				// bionic leaves tpoff at 0 for an unresolved weak symbol, then
+				// adds the addend: &weak_tls_symbol == TP + addend.
+				return writeValue(static_cast<uint64_t>(relocation.addend));
+			}
+			// Initial-exec against a dlopened module has no static slot; bionic
+			// rejects it rather than pointing the accessor at garbage.
+			if (!reference.owner->tls_static)
+			{
+				return Error{ ErrorCode::Unsupported,
+					module.soname + ": TLS symbol in dlopened " + reference.owner->soname +
+						" referenced using the initial-exec model" };
 			}
 			const int64_t tpoff = reference.owner->tls_offset +
 					      static_cast<int64_t>(reference.value) + relocation.addend;
@@ -218,14 +228,17 @@ Result<void> RelocApplier::applyOne(Module &module, const ElfRelocation &relocat
 		}
 		if (relocation.type == kRAarch64TlsDtprel64)
 		{
+			// Weak unresolved: sym_addr is 0, so the value is just the addend.
 			const uint64_t value = reference.weak ? 0 :
-							    reference.value +
-								    static_cast<uint64_t>(relocation.addend);
-			return writeValue(value);
+							    reference.value;
+			return writeValue(value + static_cast<uint64_t>(relocation.addend));
 		}
 
-		// TLSDESC: {func, arg}. ARM64 static TLS only; every PT_TLS module gets
-		// a static slot in M4.5 (see the design doc §4.2).
+		// TLSDESC: {func, arg}. A static module's descriptor returns a
+		// TP-relative offset directly. A dynamic module (dlopen after
+		// linker_finalize_static_tls) instead carries {generation,
+		// {module_id, offset}} and goes through the dynamic resolver, which
+		// falls back to libc's __tls_get_addr to grow this thread's DTV.
 		if (auto stubs = ensureTlsDescStubs(); !stubs.ok())
 		{
 			return stubs.error();
@@ -236,11 +249,28 @@ Result<void> RelocApplier::applyOne(Module &module, const ElfRelocation &relocat
 			descriptor[0] = tlsdesc_weak_.value();
 			descriptor[1] = static_cast<uint64_t>(relocation.addend);
 		}
-		else
+		else if (reference.owner->tls_static)
 		{
 			descriptor[0] = tlsdesc_static_.value();
 			descriptor[1] = static_cast<uint64_t>(reference.owner->tls_offset +
 				static_cast<int64_t>(reference.value) + relocation.addend);
+		}
+		else
+		{
+			if (tlsdesc_dynamic_.value() == 0)
+			{
+				return Error{ ErrorCode::Unsupported,
+					module.soname + ": dynamic TLS descriptor without a resolver thunk" };
+			}
+			auto arg = allocateTlsDescArg(reference.owner->tls_first_generation,
+				reference.owner->tls_module_id,
+				reference.value + static_cast<uint64_t>(relocation.addend));
+			if (!arg.ok())
+			{
+				return arg.error();
+			}
+			descriptor[0] = tlsdesc_dynamic_.value();
+			descriptor[1] = arg.value().value();
 		}
 		auto written = memory_.write(place, descriptor, sizeof(descriptor));
 		if (!written.ok())
@@ -336,6 +366,48 @@ Result<void> RelocApplier::ensureTlsDescStubs()
 	tlsdesc_weak_ = GuestVA{ page.value().value() + kTlsDescWeakOffset };
 	tlsdesc_ready_ = true;
 	return {};
+}
+
+Result<GuestVA> RelocApplier::allocateTlsDescArg(uint64_t generation, uint64_t module_id, uint64_t offset)
+{
+	// TlsDynamicResolverArg { generation, TlsIndex { module_id, offset } }.
+	constexpr uint64_t kArgSize = 24;
+	constexpr uint64_t kArgAlign = 8;
+
+	auto ensureRoom = [&]() -> Result<void> {
+		const uint64_t start =
+			tlsdesc_arg_cursor_.value() == 0 ? 0 : alignUp(tlsdesc_arg_cursor_.value(), kArgAlign);
+		if (tlsdesc_arg_cursor_.value() != 0 && start <= tlsdesc_arg_end_.value() &&
+		    kArgSize <= tlsdesc_arg_end_.value() - start)
+		{
+			return {};
+		}
+		auto page = memory_.map(kGuestPageSize, PermReadWrite, "[loader] tlsdesc-args");
+		if (!page.ok())
+		{
+			return page.error();
+		}
+		tlsdesc_arg_cursor_ = page.value();
+		tlsdesc_arg_end_ = GuestVA{ page.value().value() + kGuestPageSize };
+		return {};
+	};
+
+	if (auto room = ensureRoom(); !room.ok())
+	{
+		return room.error();
+	}
+	const uint64_t address = alignUp(tlsdesc_arg_cursor_.value(), kArgAlign);
+	if (address > tlsdesc_arg_end_.value() || kArgSize > tlsdesc_arg_end_.value() - address)
+	{
+		return Error{ ErrorCode::OutOfMemory, "dynamic TLSDESC argument area is full" };
+	}
+	const uint64_t values[3] = { generation, module_id, offset };
+	if (auto written = memory_.write(GuestVA{ address }, values, sizeof(values)); !written.ok())
+	{
+		return written.error();
+	}
+	tlsdesc_arg_cursor_ = GuestVA{ address + kArgSize };
+	return GuestVA{ address };
 }
 
 } // namespace duckemu::runtime::loader
