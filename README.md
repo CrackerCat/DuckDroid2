@@ -11,9 +11,11 @@ A C++ user-mode Android ARM64 emulation runtime (an unidbg-style reimplementatio
 > 多实例服务对外提供。与 [unidbg](https://github.com/zhkl0228/unidbg) 思路同源，但实现是
 > 独立的 C++ 重写，不共享代码。
 
-**当前状态（2026-10-30）：M0–M7 全部通过，45/45 tests。** 三个真实目标已接入：
-libeleven、京东 16.1.50、得物 6.1.5.10。System → Worker → RuntimeInstance 的服务链路
-跑通，并附带一个最小的 FastAPI HTTP 案例。路线图见 [docs/里程碑.md](docs/里程碑.md)。
+**当前状态（2026-10-30）：M0–M8 全部通过；生产构建 47/47 tests，分析构建
+（`-DDUCKEMU_ENABLE_TRACE=ON`）50/50。** 三个真实目标已接入：libeleven、
+京东 16.1.50、得物 6.1.5.10。System → Worker → RuntimeInstance 的服务链路跑通，
+并附带一个最小的 FastAPI HTTP 案例；分析面有指令级 trace 与绝对地址 hook。
+路线图见 [docs/里程碑.md](docs/里程碑.md)。
 
 ---
 
@@ -121,6 +123,19 @@ thunk / SVC 回到宿主 C++。
 - `svc.log`（9 列、tab 分隔、args/note 为 JSON，可解析、可 diff 的 SVC 语义日志）、
   `MemoryEvent`、`ThreadEvent`、`ModuleEvent`、`JniEvent`、每线程 SPSC 诊断环、
   x29 帧链回溯与 `trace_viewer`。
+- **指令级 trace**（`-DDUCKEMU_ENABLE_TRACE=ON`）：`code.log` / `bl.log` /
+  `rw.log` 严格沿用 QBDI 四件套的列结构、行号和 JSON 约定，另加 `threads.tsv`
+  记线程归属。目标 runner 用 `--trace DIR` 一个参数：`svc.log` 写 `DIR/svc.log`，
+  指令 trace 写 `DIR/insn/`，范围是目标代码里写的函数区间（不是 CLI 的 size
+  参数；libeleven 用 `kNativeTraceSize` 圈住 native 的 `[0x40cb4, 0x40f78)`）。
+  区间内的指令才进 `code.log`；区间外的 callee / bionic / linker 不记录，
+  但跳出区间的 `bl/blr` 进 `bl.log`，目标落在 thunk 页时解析成
+  `JNIEnv::NewStringUTF` 这类宿主函数名。`rw.log` 的 `w` 条目在指令 POST 阶段
+  落盘，hexdump 是写后内容。
+- **地址 hook**（生产构建也编译）：绝对 guest 地址 + 回调；回调在指令执行前
+  运行，且在 trace 的 PRE 采样之前。可读/写 X/W 寄存器、读/写/强写 guest
+  内存、`setPc` 跳过、按顶层调用归零的 `hit_count`。用于观测和故障注入
+  （白盒 AES/DFA 这类需要精确改寄存器或内存的场景）。
 
 ### 真实目标
 
@@ -142,9 +157,9 @@ thunk / SVC 回到宿主 C++。
 - **`ioctl` 与 io 变体**：按当前目标需求暂不做（审计 #6/#8）。
 - **严格 CFI**：shadow 是零表，`__loader_cfi_fail` 被绑成返回桩，检查被跳过而不是
   按真机终止。
-- **指令级 trace / 回放**：只有语义级 `svc.log`，没有指令级 trace，也没有回放器。
-- **调试与 hook**：没有 inline hook、Dobby/xHook、gdb/IDA stub；拦截点是 SVC、
-  GOT/导入符号、JNI 表与 loader 入口。
+- **回放器 / 内存快照**：指令级 trace 已有，但没有 `mem/` 快照，也没有回放器。
+- **inline hook / trampoline**：地址 hook 已能观测、改寄存器/内存/PC，
+  但还没有替换原函数、复制原指令的 trampoline（Dobby/xHook 那一类）。
 - **回溯**：x29 帧链不是 CFI/DWARF；release so 默认 omit-frame-pointer，链会很短。
 - **16 KiB 页**：只在 4 KiB 页上验证。
 - **更多目标**：快手、抖音还没接；`libsgmainso` 只验证了加载和绑定。
@@ -233,6 +248,7 @@ docs/
   `code/tests/CMakeLists.txt` 的 `DUCKEMU_*` cache 变量里，可用
   `-DDUCKEMU_ANDROID_ENV_ROOT=...` 改根目录
 - Web 案例额外需要 Python 3、FastAPI、uvicorn（可选）
+- 指令级 trace 额外需要 capstone >= 5（仅 `-DDUCKEMU_ENABLE_TRACE=ON` 时）
 
 ```bash
 git clone --recursive <repo-url> DuckDroid2
@@ -256,9 +272,17 @@ cmake -S code -B build-asan -G Ninja -DCMAKE_BUILD_TYPE=Debug \
 
 # 查看 svc trace
 ./build/trace_viewer summary build/tests/traces/02_pure_native.svc.log
+
+# 分析构建：指令级 trace（生产构建不链接 capstone）
+cmake -S code -B build-trace -G Ninja -DCMAKE_BUILD_TYPE=Release \
+      -DDUCKEMU_ENABLE_TRACE=ON
+cmake --build build-trace -j"$(nproc)"
+./build-trace/user_code/duckemu_libeleven_case --trace /tmp/le_insn 1
+# /tmp/le_insn/svc.log + /tmp/le_insn/insn/{code,bl,rw}.log + threads.tsv;
+# the trace range is the loaded target module's range, computed in code.
 ```
 
-当前 45 个测试，按阶段分组：
+当前 47 个测试（生产构建；`DUCKEMU_ENABLE_TRACE=ON` 为 50），按阶段分组：
 
 - 探针：`m0_probes`
 - 裸 blob：`01_tls_read`、`02_pure_native`、`02_stack_dump`、`03_pthread_join`
@@ -271,6 +295,7 @@ cmake -S code -B build-asan -G Ninja -DCMAKE_BUILD_TYPE=Debug \
 - 时钟：`06_clock_injection`
 - 服务化：`07a_instance_host`、`07b_worker_supervisor`、`07c_system_gateway`、
   `07d_session_reset`、`07_end_to_end`、`07e_jdgs_plugin`、`07f_szstone_plugin`
+- 分析面：`08_address_hook`；TRACE=ON 另有 `08_insn_trace`、`08_insn_trace_threads`、`insn_decode_test`
 - 单元：`elf_image_test`、`runtime_memory_test`、`ring_buffer_test`、
   `guest_stack_test`、`svc_trace_format_test`、`protocol_test`、`jni_world_test`、
   `jni_layout_test`、`runtime_clock_test`、`module_missing_dep_test`
@@ -353,6 +378,7 @@ libeleven 很简单（基本是魔改 base64），这组数字只说明链路通
 | M5 JNI | JNIEnv、`RegisterNatives`、严格 Java 环境 | `05_jni_stub` | ✅ |
 | M6 真实目标 | libeleven / 京东 / 得物结果一致 | `06_clock_injection`、`07e_jdgs_plugin`、`07f_szstone_plugin` | ✅ |
 | M7 服务化 | System/Worker/Instance、UDS、warm pool | `07_end_to_end` | ✅ |
+| M8 分析面 | 指令级 trace、绝对地址 hook | `08_insn_trace`、`08_address_hook`、`insn_decode_test` | ✅ |
 
 执行规则：一个里程碑 = 一个可 review 的 PR；gate 是测试文件，不是口头结论；
 不提前实现下一阶段的抽象。M6 的 reset 语义由 `07d_session_reset` 覆盖

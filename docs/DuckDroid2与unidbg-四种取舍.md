@@ -225,7 +225,7 @@ DuckDroid2 的缺点，也同样具体：
 - 绑定 ROM。`libc_shared_globals` 偏移、静态 TLS 布局、clone 语义都跟这一个 ROM 走；换 ROM 要重新核对。
 - 面窄。futex 只有 WAIT/WAKE，没有 timeout、`WAIT_BITSET`、PI；信号只留 no-op；TLS 已有静态/动态槽、DTV 增长与 dlsym 语义，但 `dlclose` 不卸载；没有 CFI/DWARF 回溯，release so 的 x29 链可能只有一帧。
 - 单核串行。没有抢占，guest 死循环会挂住调用方；服务层只能用 `SIGKILL` 兜底。签名场景够用，但如果目标自己开多线程做 CPU 并行，DuckDroid2 不会更快。
-- 工具链不如 unidbg。没有 inline hook，没有 Dobby/xHook，没有 gdb/IDA stub；要 hook 目标函数，得自己在 GOT/重定位或 guest 代码上做。
+- 工具链不如 unidbg。没有 Dobby/xHook 那类 inline hook，也没有 gdb/IDA stub；M8 的地址 hook 能在指定指令前观测/改寄存器/内存/PC，但替换原函数仍得自己在 GOT/重定位或 guest 代码上做。
 - 每接一个目标要写 C++ 声明。unidbg 的 Java override 更快，尤其在你还不确定目标用了哪些类的时候。
 - 性能只跟自己比。8176 req/s 是 DuckDroid2 的基线，不是和 unidbg 的对比结论。
 
@@ -239,7 +239,7 @@ unidbg 的优点同样明显：覆盖面广、目标多、Java 生态熟悉、�
 - **信号语义**。目前只有 no-op；`EINTR` 是接口预留，没有真正的信号投递。
 - **TLS 卸载**。静态/动态 TLS、DTV 扩容与 dlsym(STT_TLS) 已补齐；`dlclose` 仍是 no-op，模块表条目和 DTV 槽不会因卸载回收，线程退出时才由 libc 释放动态块。
 - **随机数注入**。时间戳能注入了，随机数还没有：`getrandom`（`misc_handlers.cpp:125`）和 `AT_RANDOM`（`shared_globals.cpp:102`）都还是宿主 `std::random_device`。签名服务要完全可复现，这块得做成实例级 `RuntimeRandom`。
-- **指令级 trace / 回放**。现在只有语义级的 `svc.log`，没有指令级 trace，也没有回放器；M2 当时明确推后了。真要做“重放”，这条得先补。
+- **回放器 / 内存快照**。指令级 trace 已经补上（QBDI 同构的 `code/bl/rw.log` + `threads.tsv`，见 M8），但没有 `mem/` 快照，也没有回放器；真要做“重放”，还得补这两块。
 - **futex 面**。timeout、`WAIT_BITSET`、PI、robust list、requeue 都没有。
 - **回溯**。x29 帧链不是 CFI/DWARF；Android release 构建默认 `-fomit-frame-pointer`，真实 so 上链会很短。
 - **页大小**。只在 4 KiB 页上验证；16 KiB 页设备没有覆盖。
@@ -274,7 +274,7 @@ unidbg 侧的事实基于本地 `unidbg` 0.9.8 源码；引用行号对应 `unid
 
 说点正文里没写的。做这个项目最直接的原因其实挺土的：我不会 Java，Java 那套构建环境我是真搞不定，看到 gradle/maven 就头大；最近又在学 ART，索性沿着 native 能看到的那一层，自己把运行时写一遍。所以 DuckDroid2 只做了 ART 的一层——JNIEnv/JavaVM 和 native 边界，对象模型、GC、解释器/JIT 这些都没碰。
 
-模拟执行的好处也在这儿：环境是自己的，时钟能注入，拦截点和事件都在手里，出了问题能回去翻 svc.log、内存事件和 JNI 事件。不过随机数现在还是宿主 RNG（`misc_handlers.cpp:125`），指令级 trace/回放和 inline hook 也都没做，这几条别算成已经有的能力。
+模拟执行的好处也在这儿：环境是自己的，时钟能注入，拦截点和事件都在手里，出了问题能回去翻 svc.log、内存事件和 JNI 事件。不过随机数现在还是宿主 RNG（`misc_handlers.cpp:125`），指令级 trace 和绝对地址 hook 已经有（M8），但回放器和 inline hook/trampoline 还没做，这几条别算成已经有的能力。
 
 libeleven 是真的简单，基本就是个魔改 base64，所以 1..100 逐字节一致、8176 req/s 这些，只能说明链路是通的，不代表它能扛复杂 so。京东才算第一个像样的目标：一次签名大概 100 ms guest CPU，单实例串行；2 实例/2 客户端约 23 req/s（平均 87 ms），4 实例/8 客户端约 39 req/s（平均 201 ms），跟 libeleven 不是一个量级。
 

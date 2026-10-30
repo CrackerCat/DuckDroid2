@@ -204,7 +204,8 @@ Result<std::unique_ptr<UnicornEngine> > ThreadScheduler::createEngineFor(Runtime
 		[&thread](uc_engine *uc, uint32_t intno) {
 			thread.dispatcher->onTrap(uc, intno);
 		},
-		std::move(sink));
+		std::move(sink),
+		thread.tid);
 }
 
 void ThreadScheduler::publishThreadEvent(observer::ThreadEventKind kind, const RuntimeThread &thread)
@@ -231,6 +232,11 @@ Result<CallResult> ThreadScheduler::callFunction(GuestVA entry, const std::array
 	{
 		return Error{ ErrorCode::InvalidArgument,
 			"callFunction from an event listener would re-enter the emulator" };
+	}
+	if (backend_.inHookCallback())
+	{
+		return Error{ ErrorCode::InvalidArgument,
+			"callFunction from an address hook would re-enter the emulator" };
 	}
 	if (main_ == nullptr)
 	{
@@ -272,6 +278,10 @@ Result<CallResult> ThreadScheduler::callFunction(GuestVA entry, const std::array
 
 void ThreadScheduler::initializeMainCall(RuntimeThread &thread)
 {
+	// A top-level call is the unit the address-hook hit counter resets on.
+	// Called under the execution lock, so no engine is running.
+	backend_.resetHookHitCounts();
+
 	CallRequest request;
 	{
 		std::lock_guard<std::mutex> lock(thread.mutex);

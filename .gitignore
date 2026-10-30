@@ -20,3 +20,6 @@ code/tests/guest_so/out/
 .idea/
 .vscode/
 *.swp
+
+# 分析 trace 输出（各 runner 的 --trace DIR）
+trace_logs/

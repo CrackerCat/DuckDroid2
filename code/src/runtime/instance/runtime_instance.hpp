@@ -16,6 +16,8 @@
 #include "runtime/memory/thunk/thunk_table.hpp"
 #include "runtime/observer/diagnostic/diagnostic_event.hpp"
 #include "runtime/observer/event_bus.hpp"
+#include "runtime/observer/hook/hook_context.hpp"
+#include "runtime/observer/trace/insn_trace.hpp"
 
 namespace duckemu::runtime
 {
@@ -42,6 +44,11 @@ struct RuntimeConfig
 	std::string trace_path;
 	bool record_memory_access = false;
 	size_t diagnostic_capacity = 1u << 14;
+
+	// Default directory for instruction-level trace files. A runner still has
+	// to call startInsnTrace() with the range; an empty InsnTraceOptions
+	// directory falls back to this. Requires a DUCKEMU_ENABLE_TRACE build.
+	std::string insn_trace_directory;
 
 	// Loader search path for DT_NEEDED names that are not virtual modules. The
 	// directory of the requesting module is always searched first.
@@ -176,6 +183,19 @@ class RuntimeInstance
 	// droppedDiagnostics() counts events lost because the ring was full.
 	size_t drainDiagnostics(std::vector<observer::DiagnosticEvent> &out);
 	[[nodiscard]] uint64_t droppedDiagnostics() const;
+
+	// Address hook: the callback runs before the instruction at `address`.
+	// All engines, including threads created later, receive it. Must be called
+	// from host code, not from inside a hook or event listener.
+	Result<uint32_t> addAddressHook(GuestVA address, observer::AddressHook hook);
+	bool removeAddressHook(uint32_t id);
+
+	// Instruction-level trace over [begin, begin + size). The range must stay
+	// inside one loaded module. One session at a time; the files live in
+	// options.directory (or config.insn_trace_directory when empty).
+	Result<void> startInsnTrace(observer::InsnTraceOptions options);
+	void stopInsnTrace();
+	[[nodiscard]] bool insnTraceActive() const;
 
     private:
 	struct Impl;

@@ -37,10 +37,17 @@ duckemu_guest_blob(BLOB_STACK_DUMP
   "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/blobs/02_stack_dump.S")
 duckemu_guest_blob(BLOB_PTHREAD_JOIN
   "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/blobs/03_pthread_join.S")
+duckemu_guest_blob(BLOB_TRACE_MAIN
+  "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/blobs/08_trace_main.S")
+duckemu_guest_blob(BLOB_TRACE_EXT
+  "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/blobs/08_trace_ext.S")
+duckemu_guest_blob(BLOB_ADDRESS_HOOK
+  "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/blobs/08_hook.S")
 
 add_custom_target(guest_blobs ALL
   DEPENDS ${BLOB_TLS_READ} ${BLOB_PURE_NATIVE} ${BLOB_EXIT_GROUP}
-          ${BLOB_STACK_DUMP} ${BLOB_PTHREAD_JOIN})
+          ${BLOB_STACK_DUMP} ${BLOB_PTHREAD_JOIN}
+          ${BLOB_TRACE_MAIN} ${BLOB_TRACE_EXT} ${BLOB_ADDRESS_HOOK})
 
 # ---------------------------------------------------------------------------
 # Guest shared objects for the M4 loader gate. Built for aarch64-linux-android
@@ -305,6 +312,14 @@ duckemu_add_integration_test(01_tls_read)
 duckemu_add_integration_test(02_pure_native)
 duckemu_add_integration_test(02_stack_dump)
 duckemu_add_integration_test(03_pthread_join)
+duckemu_add_integration_test(08_address_hook)
+
+# The instruction trace needs capstone; only register its gate when the
+# analysis build is enabled.
+if(DUCKEMU_ENABLE_TRACE)
+  duckemu_add_integration_test(08_insn_trace)
+  duckemu_add_integration_test(08_insn_trace_threads)
+endif()
 
 function(duckemu_add_loader_test name)
   add_executable(${name} "integration/${name}.cpp")
@@ -656,6 +671,13 @@ add_executable(svc_trace_format_test unit/observer/svc_trace_format_test.cpp)
 target_link_libraries(svc_trace_format_test PRIVATE duckemu_runtime duckemu_test_support)
 add_test(NAME svc_trace_format_test COMMAND svc_trace_format_test)
 duckemu_set_warnings(svc_trace_format_test)
+
+if(DUCKEMU_ENABLE_TRACE)
+  add_executable(insn_decode_test unit/runtime/insn_decode_test.cpp)
+  target_link_libraries(insn_decode_test PRIVATE duckemu_runtime duckemu_test_support)
+  add_test(NAME insn_decode_test COMMAND insn_decode_test)
+  duckemu_set_warnings(insn_decode_test)
+endif()
 
 # M7 S1: wire framing and JSON message validation.
 add_executable(protocol_test unit/protocol/protocol_test.cpp)

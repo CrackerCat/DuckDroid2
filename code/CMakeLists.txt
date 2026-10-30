@@ -18,6 +18,13 @@ option(DUCKEMU_BUILD_TESTS "Build the test suite" ON)
 option(DUCKEMU_USE_SYSTEM_UNICORN
        "Link the system libunicorn instead of code/third_party/unicorn" OFF)
 
+# Instruction-level trace is an analysis-mode feature. It needs capstone for
+# disassembly and operand access flags; production builds leave it off so the
+# runtime has no extra dependency. Address hooks do not need capstone and are
+# always built.
+option(DUCKEMU_ENABLE_TRACE
+       "Build the instruction-level trace (requires capstone >= 5)" OFF)
+
 duckemu_setup_sanitizers()
 
 # ---------------------------------------------------------------------------
@@ -60,6 +67,12 @@ endif()
 # ---------------------------------------------------------------------------
 find_package(Threads REQUIRED)
 
+if(DUCKEMU_ENABLE_TRACE)
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(DUCKEMU_CAPSTONE REQUIRED IMPORTED_TARGET capstone>=5)
+  message(STATUS "Instruction trace: capstone ${DUCKEMU_CAPSTONE_VERSION}")
+endif()
+
 # JSON is the M7 wire format. A system package (same as DuckDroid) keeps the
 # tree free of a vendored single-header dependency.
 find_package(nlohmann_json 3.11 QUIET)
@@ -75,6 +88,17 @@ add_library(duckemu_common STATIC
 )
 target_include_directories(duckemu_common PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 duckemu_set_warnings(duckemu_common)
+
+set(DUCKEMU_TRACE_SOURCES)
+if(DUCKEMU_ENABLE_TRACE)
+  list(APPEND DUCKEMU_TRACE_SOURCES
+    src/runtime/observer/trace/buffered_file.cpp
+    src/runtime/observer/trace/insn_decode.cpp
+    src/runtime/observer/trace/insn_trace.cpp)
+else()
+  list(APPEND DUCKEMU_TRACE_SOURCES
+    src/runtime/observer/trace/insn_trace_stub.cpp)
+endif()
 
 add_library(duckemu_runtime STATIC
   src/runtime/instance/runtime_instance.cpp
@@ -111,7 +135,9 @@ add_library(duckemu_runtime STATIC
   src/runtime/backend/unicorn/unicorn_hooks.cpp
   src/runtime/observer/event_bus.cpp
   src/runtime/observer/diagnostic/guest_stack.cpp
+  src/runtime/observer/hook/hook_context.cpp
   src/runtime/observer/trace/svc_trace.cpp
+  ${DUCKEMU_TRACE_SOURCES}
   src/runtime/threads/tls/tls_manager.cpp
   src/runtime/threads/scheduler.cpp
   src/runtime/svc/dispatcher.cpp
@@ -128,6 +154,9 @@ target_link_libraries(duckemu_runtime PUBLIC
   duckemu_unicorn
   Threads::Threads
 )
+if(DUCKEMU_ENABLE_TRACE)
+  target_link_libraries(duckemu_runtime PUBLIC PkgConfig::DUCKEMU_CAPSTONE)
+endif()
 duckemu_set_warnings(duckemu_runtime)
 
 # M7 wire protocol: framing + JSON messages. Shared by System, Worker and the

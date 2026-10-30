@@ -5,6 +5,10 @@
 //   ./duckemu_libeleven_case        # data(1)
 //   ./duckemu_libeleven_case 1 100  # data(1)..data(100)
 //   ./duckemu_libeleven_case --trace DIR 5
+//     # svc.log at DIR/svc.log and the instruction trace at DIR/insn/.
+//     # The range is the native function's byte range defined below
+//     # (kNativeTraceSize), not a CLI argument; requires
+//     # -DDUCKEMU_ENABLE_TRACE=ON.
 //
 // The Java side of the project (the class and the native method declaration)
 // is libeleven_env.cpp; main installs it explicitly before loading anything.
@@ -14,6 +18,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <optional>
 #include <string>
 
@@ -41,6 +46,12 @@ constexpr const char *kClassName =
 	"com/yuanrenxue/challenge/fragment/challenge/ChallengeElevenFragment";
 constexpr const char *kMethodName = "data";
 constexpr const char *kSignature = "(I)Ljava/lang/String;";
+
+// The registered native starts at libeleven.so + 0x40cb4. The next function
+// prologue begins at 0x40f78, so the function's own code range is 0x2c4 bytes.
+// This is intentionally a code constant, not a CLI knob: the analysis target
+// owns its trace range.
+constexpr uint64_t kNativeTraceSize = 0x2c4;
 
 std::string romLibc()
 {
@@ -101,9 +112,22 @@ int main(int argc, char **argv)
 		first = last = 1;
 	}
 
+	if (!trace_path.empty())
+	{
+		std::error_code directory_error;
+		std::filesystem::create_directories(trace_path, directory_error);
+		if (directory_error)
+		{
+			std::fprintf(stderr, "cannot create trace directory %s: %s\n",
+				trace_path.c_str(),
+				directory_error.message().c_str());
+			return 1;
+		}
+	}
+
 	RuntimeConfig config;
 	config.library_search_paths = { DUCKEMU_ROM_BOOTSTRAP, DUCKEMU_ROM_LIB64 };
-	config.trace_path = trace_path;
+	config.trace_path = trace_path.empty() ? std::string{} : trace_path + "/svc.log";
 
 	auto created = RuntimeInstance::create(config);
 	if (!created.ok())
@@ -160,6 +184,28 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
+	if (!trace_path.empty())
+	{
+		auto native = instance.lookupRegisteredNative(kClassName, kMethodName, kSignature);
+		if (!native.ok())
+		{
+			std::fprintf(stderr, "lookup native for trace failed: %s\n",
+				native.error().message.c_str());
+			return 1;
+		}
+		observer::InsnTraceOptions options;
+		options.directory = trace_path + "/insn";
+		options.begin = native.value();
+		options.size = kNativeTraceSize;
+		auto started = instance.startInsnTrace(options);
+		if (!started.ok())
+		{
+			std::fprintf(stderr, "start instruction trace failed: %s\n",
+				started.error().message.c_str());
+			return 1;
+		}
+	}
+
 	// The native is static: x0 = JNIEnv*, x1 = jclass, x2 = the int argument.
 	int failures = 0;
 	for (int value = first; value <= last; ++value)
@@ -192,5 +238,6 @@ int main(int argc, char **argv)
 		std::printf("data(%d) = %s\n", value, text.value().c_str());
 	}
 
+	instance.stopInsnTrace();
 	return failures == 0 ? 0 : 1;
 }

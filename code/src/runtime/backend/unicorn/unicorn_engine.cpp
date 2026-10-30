@@ -190,10 +190,77 @@ void UnicornEngine::setCodeWriteSink(CodeWriteSink sink)
 	code_write_sink_ = std::move(sink);
 }
 
+void UnicornEngine::setRunEndSink(RunEndSink sink)
+{
+	run_end_sink_ = std::move(sink);
+}
+
+Result<uc_hook> UnicornEngine::addCodeHook(uint64_t begin,
+	uint64_t end,
+	CodeHookCallback callback,
+	void *user_data)
+{
+	uc_hook hook = 0;
+	const uc_err err = uc_hook_add(engine_,
+		&hook,
+		UC_HOOK_CODE,
+		reinterpret_cast<void *>(callback),
+		user_data,
+		begin,
+		end);
+	if (err != UC_ERR_OK)
+	{
+		return unicornError(err, "uc_hook_add(UC_HOOK_CODE)");
+	}
+	return hook;
+}
+
+Result<uc_hook> UnicornEngine::addMemoryHook(uint32_t type, MemoryHookCallback callback, void *user_data)
+{
+	uc_hook hook = 0;
+	const uc_err err = uc_hook_add(engine_,
+		&hook,
+		static_cast<int>(type),
+		reinterpret_cast<void *>(callback),
+		user_data,
+		1,
+		0);
+	if (err != UC_ERR_OK)
+	{
+		return unicornError(err, "uc_hook_add(memory)");
+	}
+	return hook;
+}
+
+Result<void> UnicornEngine::removeHook(uc_hook hook)
+{
+	if (hook == 0)
+	{
+		return {};
+	}
+	const uc_err err = uc_hook_del(engine_, hook);
+	if (err != UC_ERR_OK)
+	{
+		return unicornError(err, "uc_hook_del");
+	}
+	return {};
+}
+
 Result<RunOutcome> UnicornEngine::run(GuestVA begin, GuestVA until, uint64_t timeout_us)
 {
 	RunOutcome outcome;
 	outcome.err = uc_emu_start(engine_, begin.value(), until.value(), timeout_us, 0);
+	if (run_end_sink_)
+	{
+		try
+		{
+			run_end_sink_(engine_);
+		}
+		catch (...)
+		{
+			DUCKEMU_ERROR("run-end sink threw; ignored");
+		}
+	}
 	auto pc = readRegister(UC_ARM64_REG_PC);
 	if (!pc.ok())
 	{

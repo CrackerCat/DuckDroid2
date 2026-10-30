@@ -1055,4 +1055,52 @@ uint64_t RuntimeInstance::droppedDiagnostics() const
 	return impl_->scheduler->droppedDiagnostics();
 }
 
+Result<uint32_t> RuntimeInstance::addAddressHook(GuestVA address, observer::AddressHook hook)
+{
+	if (impl_->state != Impl::State::Ready)
+	{
+		return Error{ ErrorCode::InvalidArgument, "RuntimeInstance is not ready to add hooks" };
+	}
+	auto execution = impl_->scheduler->lockExecution();
+	return impl_->backend->addAddressHook(address, std::move(hook));
+}
+
+bool RuntimeInstance::removeAddressHook(uint32_t id)
+{
+	auto execution = impl_->scheduler->lockExecution();
+	return impl_->backend->removeAddressHook(id);
+}
+
+Result<void> RuntimeInstance::startInsnTrace(observer::InsnTraceOptions options)
+{
+	if (impl_->state != Impl::State::Ready)
+	{
+		return Error{ ErrorCode::InvalidArgument, "RuntimeInstance is not ready to trace" };
+	}
+	if (options.directory.empty())
+	{
+		options.directory = impl_->config.insn_trace_directory;
+	}
+	if (options.directory.empty())
+	{
+		return Error{ ErrorCode::InvalidArgument, "instruction trace directory is empty" };
+	}
+	auto execution = impl_->scheduler->lockExecution();
+	return impl_->backend->startInsnTrace(options,
+		impl_->memory,
+		impl_->modules->registry(),
+		impl_->thunks.get());
+}
+
+void RuntimeInstance::stopInsnTrace()
+{
+	auto execution = impl_->scheduler->lockExecution();
+	impl_->backend->stopInsnTrace();
+}
+
+bool RuntimeInstance::insnTraceActive() const
+{
+	return impl_->backend->insnTraceActive();
+}
+
 } // namespace duckemu::runtime

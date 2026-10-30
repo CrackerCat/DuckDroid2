@@ -28,6 +28,10 @@ class UnicornEngine
 	using SvcTrapHandler = std::function<void(uc_engine *, uint32_t)>;
 	using DiagnosticSink = std::function<void(const observer::DiagnosticEvent &)>;
 	using CodeWriteSink = std::function<void(GuestVA, uint64_t)>;
+	using RunEndSink = std::function<void(uc_engine *)>;
+
+	using CodeHookCallback = void (*)(uc_engine *, uint64_t, uint32_t, void *);
+	using MemoryHookCallback = bool (*)(uc_engine *, uc_mem_type, uint64_t, int, int64_t, void *);
 
 	static Result<std::unique_ptr<UnicornEngine> > create();
 	~UnicornEngine();
@@ -52,6 +56,17 @@ class UnicornEngine
 	// Guest wrote to memory. The sink runs on the emulating thread and is
 	// expected to invalidate translated code in every engine of the instance.
 	void setCodeWriteSink(CodeWriteSink sink);
+
+	// Called after every uc_emu_start returns, before the caller inspects the
+	// engine. The trace uses it to flush the last instruction's POST values.
+	void setRunEndSink(RunEndSink sink);
+
+	// Generic hook installation used by UnicornBackend for instruction tracing
+	// and address hooks. The callback and user_data are passed to Unicorn
+	// verbatim; the caller owns the user_data lifetime.
+	Result<uc_hook> addCodeHook(uint64_t begin, uint64_t end, CodeHookCallback callback, void *user_data);
+	Result<uc_hook> addMemoryHook(uint32_t type, MemoryHookCallback callback, void *user_data);
+	Result<void> removeHook(uc_hook hook);
 
 	// Runs guest code until `until`, a stop request, a timeout or a fault.
 	// `until == 0` means "no end address"; the thread only leaves through an
@@ -108,6 +123,7 @@ class UnicornEngine
 	SvcTrapHandler svc_handler_;
 	DiagnosticSink diagnostic_sink_;
 	CodeWriteSink code_write_sink_;
+	RunEndSink run_end_sink_;
 	uc_hook intr_hook_ = 0;
 	uc_hook mem_write_hook_ = 0;
 	uc_hook diagnostic_hook_ = 0;
