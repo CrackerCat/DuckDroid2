@@ -95,6 +95,9 @@ add_library(duckemu_runtime STATIC
   src/runtime/loader/virtual_modules/virtual_modules.cpp
   src/runtime/memory/address_space.cpp
   src/runtime/memory/thunk/thunk_table.cpp
+  src/runtime/props/property_files.cpp
+  src/runtime/props/property_image.cpp
+  src/runtime/props/property_table.cpp
   src/runtime/vfs/runtime_vfs.cpp
   src/runtime/vfs/file.cpp
   src/runtime/vfs/fd_table.cpp

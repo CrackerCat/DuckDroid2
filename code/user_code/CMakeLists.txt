@@ -71,5 +71,6 @@ target_compile_definitions(duckemu_jdgs_case PRIVATE
   DUCKEMU_ROM_BOOTSTRAP="${DUCKEMU_ROM_BOOTSTRAP}"
   DUCKEMU_ROM_LIB64="${DUCKEMU_ROM_LIB64}"
   DUCKEMU_JDGS_SO="${DUCKEMU_JDGS_CASE_DIR}/assets/libjdg.so"
-  DUCKEMU_JDGS_ROOT="${DUCKEMU_JDGS_CASE_DIR}/assets/root")
+  DUCKEMU_JDGS_ROOT="${DUCKEMU_JDGS_CASE_DIR}/assets/root"
+  DUCKEMU_JDGS_PROPERTIES="${DUCKEMU_JDGS_CASE_DIR}/jdgs.properties")
 duckemu_set_warnings(duckemu_jdgs_case)

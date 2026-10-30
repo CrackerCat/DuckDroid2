@@ -1,0 +1,53 @@
+// SPDX-License-Identifier: GPL-2.0-only
+#include "runtime/props/property_files.hpp"
+
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "runtime/props/property_image.hpp"
+
+namespace duckemu::runtime::props
+{
+namespace
+{
+
+std::shared_ptr<const std::vector<uint8_t> > share(std::vector<uint8_t> bytes)
+{
+	return std::make_shared<const std::vector<uint8_t> >(std::move(bytes));
+}
+
+} // namespace
+
+Result<std::unique_ptr<PropertyFiles> > PropertyFiles::build(const PropertyTable &table)
+{
+	auto images = buildImages(table);
+	if (!images.ok())
+	{
+		return images.error();
+	}
+
+	std::unique_ptr<PropertyFiles> files(new PropertyFiles());
+	files->context_ = images.value().context;
+	files->nodes_.emplace("/dev/__properties__", vfs::SyntheticNode{ true, nullptr });
+	files->nodes_.emplace("/dev/__properties__/property_info",
+		vfs::SyntheticNode{ false, share(std::move(images.value().property_info)) });
+	files->nodes_.emplace("/dev/__properties__/properties_serial",
+		vfs::SyntheticNode{ false, share(std::move(images.value().serial_area)) });
+	files->nodes_.emplace("/dev/__properties__/" + files->context_,
+		vfs::SyntheticNode{ false, share(std::move(images.value().context_area)) });
+	return files;
+}
+
+std::optional<vfs::SyntheticNode> PropertyFiles::lookup(std::string_view guest_path) const
+{
+	const auto found = nodes_.find(std::string(guest_path));
+	if (found == nodes_.end())
+	{
+		return std::nullopt;
+	}
+	return found->second;
+}
+
+} // namespace duckemu::runtime::props

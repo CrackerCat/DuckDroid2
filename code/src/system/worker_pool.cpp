@@ -193,6 +193,11 @@ bool WorkerPool::Impl::Spawn(Slot &slot, std::string *error)
 		arguments.push_back("--filesystem-write-root");
 		arguments.push_back(spec.filesystem_write_root);
 	}
+	if (!spec.property_file.empty())
+	{
+		arguments.push_back("--property-file");
+		arguments.push_back(spec.property_file);
+	}
 	arguments.push_back("--instances");
 	arguments.push_back(std::to_string(spec.instances));
 	arguments.push_back("--init-timeout-us");

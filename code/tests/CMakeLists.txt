@@ -396,7 +396,8 @@ target_compile_definitions(07e_jdgs_plugin PRIVATE
   DUCKEMU_ROM_BOOTSTRAP="${DUCKEMU_ROM_BOOTSTRAP}"
   DUCKEMU_ROM_LIB64="${DUCKEMU_ROM_LIB64}"
   DUCKEMU_JDGS_SO="${CMAKE_CURRENT_SOURCE_DIR}/../user_code/jdgs_case/assets/libjdg.so"
-  DUCKEMU_JDGS_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/../user_code/jdgs_case/assets/root")
+  DUCKEMU_JDGS_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/../user_code/jdgs_case/assets/root"
+  DUCKEMU_JDGS_PROPERTIES="${CMAKE_CURRENT_SOURCE_DIR}/../user_code/jdgs_case/jdgs.properties")
 add_test(NAME 07e_jdgs_plugin COMMAND 07e_jdgs_plugin)
 set_tests_properties(07e_jdgs_plugin PROPERTIES TIMEOUT 180)
 duckemu_set_warnings(07e_jdgs_plugin)
@@ -451,6 +452,20 @@ target_compile_definitions(04c_preinit PRIVATE
 add_test(NAME 04c_preinit COMMAND 04c_preinit)
 set_tests_properties(04c_preinit PROPERTIES TIMEOUT 120)
 duckemu_set_warnings(04c_preinit)
+
+# M4.6: system properties. The runtime writes the serialized
+# /dev/__properties__ images; libc's preinit (already running by 04c_preinit)
+# parses them, so every read below goes through bionic's own trie walk.
+add_executable(04i_properties integration/04i_properties.cpp)
+target_link_libraries(04i_properties PRIVATE duckemu_runtime duckemu_test_support)
+target_compile_definitions(04i_properties PRIVATE
+  DUCKEMU_TRACE_DIR="${CMAKE_CURRENT_BINARY_DIR}/traces"
+  DUCKEMU_ROM_BOOTSTRAP="${DUCKEMU_ROM_BOOTSTRAP}"
+  DUCKEMU_ROM_LIB64="${DUCKEMU_ROM_LIB64}"
+  DUCKEMU_PROPERTY_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/props/properties.conf")
+add_test(NAME 04i_properties COMMAND 04i_properties)
+set_tests_properties(04i_properties PROPERTIES TIMEOUT 120)
+duckemu_set_warnings(04i_properties)
 
 # M4.6 S3: VFS + /proc. A ROM symbols tree is mounted as guest "/" so the
 # read-only file mmap half of the gate has a real file to map.

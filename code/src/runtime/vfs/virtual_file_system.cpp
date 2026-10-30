@@ -300,6 +300,23 @@ Result<std::unique_ptr<File> > VirtualFileSystem::openPath(const std::string &gu
 		return std::unique_ptr<File>(new MemoryFile(guest_path, std::move(generator.value())));
 	}
 
+	if (config_.synthetic != nullptr)
+	{
+		auto node = config_.synthetic->lookup(guest_path);
+		if (node.has_value())
+		{
+			if (node->directory)
+			{
+				return Error{ ErrorCode::IsDirectory, guest_path + " is a directory" };
+			}
+			if ((flags & kODirectory) != 0)
+			{
+				return Error{ ErrorCode::NotDirectory, guest_path + " is not a directory" };
+			}
+			return std::unique_ptr<File>(new StaticFile(guest_path, std::move(node->content)));
+		}
+	}
+
 	auto host = resolveHost(guest_path);
 	if (!host.ok())
 	{
@@ -349,6 +366,12 @@ Result<uint64_t> VirtualFileSystem::open(uint64_t dirfd,
 	if (isProcPath(guest_path))
 	{
 		return Error{ ErrorCode::Unsupported, "proc files are read-only" };
+	}
+	if (config_.synthetic != nullptr && config_.synthetic->lookup(guest_path).has_value())
+	{
+		// The property service is not modelled; like an app without write
+		// access to /dev/__properties__, the open fails.
+		return Error{ ErrorCode::Unsupported, guest_path + " is read-only" };
 	}
 	if ((flags & kODirectory) != 0)
 	{
@@ -531,6 +554,23 @@ Result<FileStat> VirtualFileSystem::stat(uint64_t dirfd, std::string_view path)
 		return stat;
 	}
 
+	if (config_.synthetic != nullptr)
+	{
+		auto node = config_.synthetic->lookup(guest_path);
+		if (node.has_value())
+		{
+			FileStat result;
+			result.inode = std::hash<std::string>{}(guest_path);
+			result.mode = node->directory ? (S_IFDIR | 0555) : (S_IFREG | 0444);
+			result.link_count = node->directory ? 2 : 1;
+			result.uid = 0;
+			result.gid = 0;
+			result.size = node->content ? node->content->size() : 0;
+			result.blocks = (result.size + 511) / 512;
+			return result;
+		}
+	}
+
 	auto host = resolveHost(guest_path);
 	if (!host.ok())
 	{
@@ -554,7 +594,7 @@ Result<FileStat> VirtualFileSystem::statFd(uint64_t fd)
 		return Error{ ErrorCode::BadFileDescriptor, "fd is not open" };
 	}
 	auto stat = file->stat();
-	if (stat.ok())
+	if (stat.ok() && !file->systemOwned())
 	{
 		applyOwner(stat.value());
 	}
@@ -659,6 +699,23 @@ Result<void> VirtualFileSystem::access(uint64_t dirfd, std::string_view path, ui
 		return resolved.error();
 	}
 	const std::string &guest_path = resolved.value();
+
+	if (config_.synthetic != nullptr)
+	{
+		auto node = config_.synthetic->lookup(guest_path);
+		if (node.has_value())
+		{
+			if ((mode & kAccessWrite) != 0)
+			{
+				return Error{ ErrorCode::PermissionDenied, guest_path + " is read-only" };
+			}
+			if ((mode & kAccessExecute) != 0 && !node->directory)
+			{
+				return Error{ ErrorCode::PermissionDenied, guest_path + " is not executable" };
+			}
+			return {};
+		}
+	}
 
 	if (isProcPath(guest_path))
 	{

@@ -30,13 +30,13 @@ void Usage()
 		"usage: duckemu_worker --instance --ipc-fd FD --instance-id ID\n"
 		"                      --app ID --library PATH --rom-libc PATH\n"
 		"                      [--library-path DIR]... [--filesystem-root DIR]...\n"
-		"                      [--filesystem-write-root DIR]\n"
+		"                      [--filesystem-write-root DIR] [--property-file PATH]\n"
 		"                      [--trace DIR] [--wall-time-ns N] [--monotonic-time-ns N]\n"
 		"   or: duckemu_worker --supervisor --ipc-fd FD\n"
 		"                      --app ID --library PATH --rom-libc PATH\n"
 		"                      [--instances N] [--instance-exec PATH]\n"
 		"                      [--library-path DIR]... [--filesystem-root DIR]...\n"
-		"                      [--filesystem-write-root DIR]\n"
+		"                      [--filesystem-write-root DIR] [--property-file PATH]\n"
 		"                      [--trace DIR] [--worker-id ID] [--init-timeout-us N]\n"
 		"                      [--invoke-timeout-us N] [--backoff-ms N]\n"
 		"                      [--max-requests-per-instance N]\n"
@@ -82,6 +82,7 @@ struct Arguments
 	std::vector<std::string> library_paths;
 	std::vector<std::string> filesystem_roots;
 	std::string filesystem_write_root;
+	std::string property_file;
 	std::string trace;
 	std::string instance_exec;
 	uint32_t instances = 1;
@@ -187,6 +188,13 @@ bool ParseArguments(int argc, char **argv, Arguments *arguments)
 				return false;
 			}
 			arguments->filesystem_write_root = value;
+		}
+		else if (argument == "--property-file")
+		{
+			if (!TakeValue(argc, argv, &index, "--property-file", &arguments->property_file))
+			{
+				return false;
+			}
 		}
 		else if (argument == "--trace")
 		{
@@ -303,6 +311,7 @@ int RunInstance(const Arguments &arguments)
 	config.app.library_search_paths = arguments.library_paths;
 	config.app.filesystem_roots = arguments.filesystem_roots;
 	config.app.filesystem_write_root = arguments.filesystem_write_root;
+	config.app.property_file = arguments.property_file;
 	config.trace_path = arguments.trace;
 	config.has_wall_time = arguments.has_wall_time;
 	config.wall_time_ns = arguments.wall_time_ns;
@@ -325,6 +334,7 @@ int RunSupervisor(const Arguments &arguments)
 	config.app.library_search_paths = arguments.library_paths;
 	config.app.filesystem_roots = arguments.filesystem_roots;
 	config.app.filesystem_write_root = arguments.filesystem_write_root;
+	config.app.property_file = arguments.property_file;
 	config.instance_executable = arguments.instance_exec;
 	config.instances = arguments.instances;
 	config.init_timeout_us = arguments.init_timeout_us;

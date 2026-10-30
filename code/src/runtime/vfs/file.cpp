@@ -74,6 +74,77 @@ Result<uint64_t> StdioFile::seek(int64_t, int)
 	return Error{ ErrorCode::NotSeekable, "lseek on a standard stream" };
 }
 
+StaticFile::StaticFile(std::string path, std::shared_ptr<const std::vector<uint8_t> > content)
+	: path_(std::move(path))
+	, content_(std::move(content))
+{
+}
+
+Result<FileStat> StaticFile::stat()
+{
+	FileStat result;
+	result.inode = std::hash<std::string>{}(path_);
+	result.mode = S_IFREG | 0444;
+	result.uid = 0;
+	result.gid = 0;
+	result.size = content_ ? content_->size() : 0;
+	result.blocks = (result.size + 511) / 512;
+	return result;
+}
+
+Result<uint64_t> StaticFile::read(void *buffer, uint64_t count)
+{
+	auto result = readAt(offset_, buffer, count);
+	if (result.ok())
+	{
+		offset_ += result.value();
+	}
+	return result;
+}
+
+Result<uint64_t> StaticFile::readAt(uint64_t offset, void *buffer, uint64_t count)
+{
+	const uint64_t size = content_ ? content_->size() : 0;
+	if (offset >= size || count == 0)
+	{
+		return uint64_t{ 0 };
+	}
+	const uint64_t take = std::min(count, size - offset);
+	std::memcpy(buffer, content_->data() + offset, static_cast<size_t>(take));
+	return take;
+}
+
+Result<uint64_t> StaticFile::write(const void *, uint64_t)
+{
+	return Error{ ErrorCode::Unsupported, path_ + " is read-only" };
+}
+
+Result<uint64_t> StaticFile::seek(int64_t offset, int whence)
+{
+	const int64_t size = content_ ? static_cast<int64_t>(content_->size()) : 0;
+	int64_t base = 0;
+	switch (whence)
+	{
+	case 0: // SEEK_SET
+		break;
+	case 1: // SEEK_CUR
+		base = static_cast<int64_t>(offset_);
+		break;
+	case 2: // SEEK_END
+		base = size;
+		break;
+	default:
+		return Error{ ErrorCode::InvalidArgument, "invalid whence" };
+	}
+	const int64_t target = base + offset;
+	if (target < 0)
+	{
+		return Error{ ErrorCode::InvalidArgument, "negative file offset" };
+	}
+	offset_ = static_cast<uint64_t>(target);
+	return offset_;
+}
+
 MemoryFile::MemoryFile(std::string path, Generator generator)
 	: path_(std::move(path))
 	, generator_(std::move(generator))

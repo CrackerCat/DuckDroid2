@@ -62,6 +62,11 @@ struct RuntimeConfig
 	// process name. Target packs override the fields they need.
 	device::DeviceProfile device;
 
+	// Guest-visible system properties. Identity entries (ro.product.*,
+	// ro.build.*) are derived from `device`; this build.prop-format file
+	// layers over them, in file order. Empty keeps the derived set only.
+	std::string property_file;
+
 	// Re-enables the M4 fixture virtual table (libc/liblog stubs). Off in
 	// production; 04_so_load turns it on to keep testing the thunk path.
 	bool enable_test_import_stubs = false;

@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "common/error/result.hpp"
 
@@ -24,6 +25,7 @@ enum class FileKind : uint8_t
 {
 	Regular = 0,
 	Memory,
+	Static, // immutable synthetic mount entry (/dev/__properties__)
 	Stdio,
 	Host,
 	Event, // eventfd
@@ -81,6 +83,14 @@ class File
 	[[nodiscard]] virtual Result<void> sync()
 	{
 		return {};
+	}
+
+	// Ownership that must survive statFd's device-owner stamping. Synthetic
+	// mount entries are root-owned on Android; bionic's property reader
+	// rejects a prop_area whose stat uid/gid is not 0.
+	[[nodiscard]] virtual bool systemOwned() const
+	{
+		return false;
 	}
 
 	[[nodiscard]] virtual FileKind kind() const
@@ -165,6 +175,41 @@ class MemoryFile final : public File
 	std::string path_;
 	Generator generator_;
 	std::optional<std::string> content_;
+	uint64_t offset_ = 0;
+};
+
+// Immutable content from a synthetic mount (/dev/__properties__). Root-owned
+// and 0444 like the real files, so bionic's ownership checks pass unchanged.
+class StaticFile final : public File
+{
+    public:
+	StaticFile(std::string path, std::shared_ptr<const std::vector<uint8_t> > content);
+
+	[[nodiscard]] std::string_view path() const override
+	{
+		return path_;
+	}
+	[[nodiscard]] bool writable() const override
+	{
+		return false;
+	}
+	[[nodiscard]] bool systemOwned() const override
+	{
+		return true;
+	}
+	[[nodiscard]] FileKind kind() const override
+	{
+		return FileKind::Static;
+	}
+	[[nodiscard]] Result<FileStat> stat() override;
+	[[nodiscard]] Result<uint64_t> read(void *buffer, uint64_t count) override;
+	[[nodiscard]] Result<uint64_t> readAt(uint64_t offset, void *buffer, uint64_t count) override;
+	[[nodiscard]] Result<uint64_t> write(const void *buffer, uint64_t count) override;
+	[[nodiscard]] Result<uint64_t> seek(int64_t offset, int whence) override;
+
+    private:
+	std::string path_;
+	std::shared_ptr<const std::vector<uint8_t> > content_;
 	uint64_t offset_ = 0;
 };
 

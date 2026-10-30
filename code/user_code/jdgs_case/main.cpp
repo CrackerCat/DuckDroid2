@@ -233,6 +233,9 @@ int main(int argc, char **argv)
 	config.library_search_paths = { DUCKEMU_ROM_BOOTSTRAP, DUCKEMU_ROM_LIB64 };
 	// The native opens its own APK through the package code path.
 	config.filesystem_roots = { DUCKEMU_JDGS_ROOT };
+	// The device picture the pack was validated against (Mi 8, SDK 32). The
+	// signer takes a newer platform path at ro.build.version.sdk >= 33.
+	config.property_file = DUCKEMU_JDGS_PROPERTIES;
 	config.trace_path = trace_path;
 	config.default_timeout_us = kCallTimeoutUs;
 

@@ -13,6 +13,8 @@
 #include "runtime/loader/module_loader.hpp"
 #include "runtime/memory/address_space.hpp"
 #include "runtime/observer/trace/svc_trace.hpp"
+#include "runtime/props/property_files.hpp"
+#include "runtime/props/property_table.hpp"
 #include "runtime/threads/scheduler.hpp"
 #include "runtime/threads/tls/tls_manager.hpp"
 #include "runtime/vfs/virtual_file_system.hpp"
@@ -50,6 +52,9 @@ struct RuntimeInstance::Impl : loader::DlService
 	std::unique_ptr<jni::JniState> jni;
 	std::unique_ptr<loader::BionicGlobals> bionic_globals;
 	std::unique_ptr<loader::ModuleLoader> modules;
+	// The /dev/__properties__ images. Declared before the VFS (which points at
+	// it) so it is destroyed after: reverse declaration order.
+	std::unique_ptr<props::PropertyFiles> properties;
 	// Files outlive the modules whose names they resolve (/proc/self/maps).
 	std::unique_ptr<vfs::VirtualFileSystem> files;
 	std::unique_ptr<tls::TlsManager> tls;
@@ -334,6 +339,26 @@ Result<std::unique_ptr<RuntimeInstance> > RuntimeInstance::create(const RuntimeC
 	impl->modules->setBionicGlobals(impl->bionic_globals.get());
 	impl->modules->setDlService(impl.get());
 
+	// Properties are data files under /dev/__properties__; bionic's own
+	// preinit reads them when the module graph loads, so no guest entry point
+	// has to be called here. The identity entries come from the same profile
+	// that feeds uname(2), getuid(2) and /proc synthesis.
+	auto property_table = props::PropertyTable::forDevice(config.device);
+	if (!config.property_file.empty())
+	{
+		auto applied = property_table.applyFile(config.property_file);
+		if (!applied.ok())
+		{
+			return applied.error();
+		}
+	}
+	auto property_files = props::PropertyFiles::build(property_table);
+	if (!property_files.ok())
+	{
+		return property_files.error();
+	}
+	impl->properties = std::move(property_files).value();
+
 	vfs::VfsConfig vfs_config;
 	vfs_config.pid = config.pid;
 	vfs_config.tid = config.tid;
@@ -343,6 +368,7 @@ Result<std::unique_ptr<RuntimeInstance> > RuntimeInstance::create(const RuntimeC
 	vfs_config.uid = config.device.uid;
 	vfs_config.gid = config.device.gid;
 	vfs_config.device = &config.device;
+	vfs_config.synthetic = impl->properties.get();
 	// Injected wall time also stamps file metadata, so a replay sees the same
 	// stat(2) results.
 	vfs_config.clock = &impl->clock;

@@ -17,6 +17,7 @@
 #include "runtime/vfs/fd_table.hpp"
 #include "runtime/vfs/file.hpp"
 #include "runtime/vfs/proc_fs.hpp"
+#include "runtime/vfs/synthetic_file_system.hpp"
 
 namespace duckemu::runtime
 {
@@ -56,6 +57,10 @@ struct VfsConfig
 
 	// Device identity for /proc synthesis. Null keeps the built-in defaults.
 	const device::DeviceProfile *device = nullptr;
+
+	// Read-only synthetic mounts outside the host roots (/dev/__properties__).
+	// The owner outlives the VFS. Null keeps the namespace host-only.
+	const SyntheticFileSystem *synthetic = nullptr;
 };
 
 // The process-level file system seen by guest syscalls: a descriptor table

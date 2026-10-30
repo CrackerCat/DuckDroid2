@@ -36,10 +36,15 @@ int main()
 	context.rom_libc = std::string(DUCKEMU_ROM_BOOTSTRAP) + "/libc.so";
 	context.library_search_paths = { DUCKEMU_ROM_BOOTSTRAP, DUCKEMU_ROM_LIB64 };
 	context.filesystem_roots = { DUCKEMU_JDGS_ROOT };
+	// The signer takes a newer platform path when ro.build.version.sdk >= 33,
+	// so the pack carries the Mi 8 (SDK 32) property picture it was
+	// validated against.
+	context.property_file = DUCKEMU_JDGS_PROPERTIES;
 
 	runtime::RuntimeConfig config;
 	config.library_search_paths = context.library_search_paths;
 	config.filesystem_roots = context.filesystem_roots;
+	config.property_file = context.property_file;
 	config.default_timeout_us = 60ULL * 1000 * 1000;
 
 	auto created = runtime::RuntimeInstance::create(config);

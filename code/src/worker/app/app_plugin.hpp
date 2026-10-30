@@ -30,6 +30,9 @@ struct AppContext
 	// Host directory backing guest writes (per-instance sandbox). Empty keeps
 	// the guest namespace read-only.
 	std::string filesystem_write_root;
+	// build.prop-format property overrides, layered over the identity entries
+	// derived from the app's device picture.
+	std::string property_file;
 };
 
 // One request as the plugin sees it. Deliberately not protocol::Request: the

@@ -120,8 +120,14 @@ duckemu_worker --supervisor --ipc-fd N \
   --rom-libc ROM/.../bootstrap/libc.so \
   --library-path ROM/.../bootstrap \
   --library-path ROM/.../lib64 \
-  --filesystem-root code/user_code/jdgs_case/assets/root
+  --filesystem-root code/user_code/jdgs_case/assets/root \
+  --property-file code/user_code/jdgs_case/jdgs.properties
 ```
+
+`jdgs.properties` 是这个包被验证过的设备画像（小米 8，SDK 32，来自
+`adb shell getprop`，去掉 `cache_key.*` 与含换行的条目）。签名器在
+`ro.build.version.sdk >= 33` 时会走另一条平台路径并返回 -4210，所以这个文件
+不是可选项。
 
 `libandroid.so` / `libmediandk.so` 只有 `DT_NEEDED` 依赖，签名路径不调用；
 loader 把它们的导入符号绑定为返回 0 的桩，避免拉入框架的完整依赖链。
@@ -140,7 +146,7 @@ CASE=$PWD/code/user_code/jdgs_case
 # 终端 A：起 System（Ctrl-C 结束）
 ./build/duckemu_system --socket-dir /tmp/duckemu-jdgs \
   --worker-exec "$PWD/build/duckemu_worker" \
-  --app "id=jdgs16,library=$CASE/assets/libjdg.so,rom-libc=$ROM/bootstrap/libc.so,library-path=$ROM/bootstrap:$ROM,instances=8,workers=1,filesystem-root=$CASE/assets/root"
+  --app "id=jdgs16,library=$CASE/assets/libjdg.so,rom-libc=$ROM/bootstrap/libc.so,library-path=$ROM/bootstrap:$ROM,instances=8,workers=1,filesystem-root=$CASE/assets/root,property-file=$CASE/jdgs.properties"
 
 # 终端 B：8000 次签名，8 客户端，等 8 个实例预热完再计时
 python3 code/tools/sign_client/bench.py /tmp/duckemu-jdgs/jdgs16.sock \

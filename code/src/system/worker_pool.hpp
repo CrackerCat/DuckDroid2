@@ -24,6 +24,8 @@ struct WorkerSpec
 	// their own APK need one root holding that tree.
 	std::vector<std::string> filesystem_roots;
 	std::string filesystem_write_root;
+	// build.prop-format property overrides, layered over the derived identity.
+	std::string property_file;
 	uint32_t workers = 1;
 	uint32_t instances = 1;
 	uint64_t init_timeout_us = 120ull * 1000 * 1000;
