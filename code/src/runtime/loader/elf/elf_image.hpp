@@ -79,6 +79,15 @@ class ElfImage
 	{
 		return segments_;
 	}
+	// Raw program header table, for dl_iterate_phdr (dlpi_phdr / dlpi_phnum).
+	[[nodiscard]] const std::vector<uint8_t> &phdrBytes() const
+	{
+		return phdr_bytes_;
+	}
+	[[nodiscard]] uint16_t phnum() const
+	{
+		return phnum_;
+	}
 	[[nodiscard]] const ElfTlsTemplate &tls() const
 	{
 		return tls_;
@@ -125,6 +134,8 @@ class ElfImage
 	std::vector<uint8_t> bytes_;
 	std::string source_;
 	std::vector<ElfSegment> segments_;
+	std::vector<uint8_t> phdr_bytes_;
+	uint16_t phnum_ = 0;
 	ElfTlsTemplate tls_;
 	std::vector<std::string> needed_;
 	std::string soname_;

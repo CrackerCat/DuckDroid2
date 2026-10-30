@@ -31,6 +31,7 @@ namespace duckemu::runtime::loader
 {
 
 class BionicGlobals;
+class DlService;
 
 // A constructor that still has to run. Dependencies come before dependants.
 struct Initializer
@@ -56,6 +57,13 @@ class ModuleLoader
 	ModuleLoader &operator=(const ModuleLoader &) = delete;
 
 	[[nodiscard]] Result<uint64_t> load(std::string_view path);
+
+	// dlopen entry point: a path when `name` contains '/', otherwise a
+	// DT_NEEDED-style name looked up in `requester_directory` and then the
+	// configured search paths. An already-loaded soname returns its handle.
+	[[nodiscard]] Result<uint64_t> loadByName(std::string_view name,
+		std::string_view requester_directory);
+
 	[[nodiscard]] Result<GuestVA> lookup(uint64_t handle, std::string_view symbol) const;
 	[[nodiscard]] Result<GuestVA> lookupGlobal(std::string_view symbol) const;
 
@@ -92,6 +100,12 @@ class ModuleLoader
 	void setBionicGlobals(BionicGlobals *globals)
 	{
 		virtuals_.setBionicGlobals(globals);
+	}
+
+	// Backs the __loader_dl* entry points. Set once the facade exists.
+	void setDlService(DlService *service)
+	{
+		virtuals_.setDlService(service);
 	}
 
     private:

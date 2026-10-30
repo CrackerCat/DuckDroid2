@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #pragma once
 
+#include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -19,6 +21,13 @@ namespace duckemu::runtime::loader
 {
 
 class BionicGlobals;
+class DlService;
+
+// Per-instance state behind the __loader_dl* thunks: the service pointer, the
+// sticky dlerror message and the guest scratch used for strings and
+// dl_phdr_info records. Shared with the thunks so its lifetime is independent
+// of this object.
+struct DlStubState;
 
 // Host implementations behind the virtual modules. Production only virtualizes
 // what a real Android linker provides (ld-android.so); the modules that real
@@ -62,6 +71,10 @@ class VirtualBionic
 		bionic_globals_ = globals;
 	}
 
+	// Backs the __loader_dl* thunks. Without a service they stay the M4
+	// binding-only stubs (return 0).
+	void setDlService(DlService *service);
+
 	// Diagnostics: how many symbols were served.
 	[[nodiscard]] size_t resolvedCount() const
 	{
@@ -73,9 +86,15 @@ class VirtualBionic
 	ThunkTable &thunks_;
 	bool test_stubs_;
 	BionicGlobals *bionic_globals_ = nullptr;
+	std::shared_ptr<DlStubState> dl_;
 	std::vector<std::pair<std::string, GuestVA> > thunks_by_name_;
 
 	Result<HostStub> makeStub(std::string_view symbol);
+
+	// One of the __loader_dl* entry points, or std::nullopt for anything else.
+	// Always returns a stub when the symbol is one of them, even before
+	// setDlService, so the binding surface does not change with configuration.
+	std::optional<HostStub> makeDlStub(std::string_view symbol);
 };
 
 } // namespace duckemu::runtime::loader

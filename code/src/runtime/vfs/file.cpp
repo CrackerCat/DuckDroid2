@@ -20,6 +20,60 @@ Error ioError(std::string message)
 
 } // namespace
 
+StdioFile::StdioFile(int host_fd)
+	: host_fd_(host_fd)
+	, path_(host_fd == 0 ? "/dev/stdin" : (host_fd == 1 ? "/dev/stdout" : "/dev/stderr"))
+{
+}
+
+Result<FileStat> StdioFile::stat()
+{
+	FileStat result;
+	result.inode = static_cast<uint64_t>(host_fd_) + 1;
+	result.mode = S_IFCHR | 0666;
+	result.link_count = 1;
+	result.block_size = 4096;
+	return result;
+}
+
+Result<uint64_t> StdioFile::read(void *buffer, uint64_t count)
+{
+	if (host_fd_ != 0)
+	{
+		return Error{ ErrorCode::BadFileDescriptor, "stdout is not readable" };
+	}
+	const ssize_t received = ::read(host_fd_, buffer, static_cast<size_t>(count));
+	if (received < 0)
+	{
+		return ioError("host read failed");
+	}
+	return static_cast<uint64_t>(received);
+}
+
+Result<uint64_t> StdioFile::readAt(uint64_t, void *, uint64_t)
+{
+	return Error{ ErrorCode::NotSeekable, "pread on a standard stream" };
+}
+
+Result<uint64_t> StdioFile::write(const void *buffer, uint64_t count)
+{
+	if (host_fd_ == 0)
+	{
+		return Error{ ErrorCode::BadFileDescriptor, "stdin is not writable" };
+	}
+	const ssize_t written = ::write(host_fd_, buffer, static_cast<size_t>(count));
+	if (written < 0)
+	{
+		return ioError("host write failed");
+	}
+	return static_cast<uint64_t>(written);
+}
+
+Result<uint64_t> StdioFile::seek(int64_t, int)
+{
+	return Error{ ErrorCode::NotSeekable, "lseek on a standard stream" };
+}
+
 MemoryFile::MemoryFile(std::string path, Generator generator)
 	: path_(std::move(path))
 	, generator_(std::move(generator))

@@ -9,6 +9,9 @@ namespace duckemu::runtime::svc
 {
 
 inline constexpr uint32_t kSysGetcwd = 17;
+inline constexpr uint32_t kSysDup = 23;
+inline constexpr uint32_t kSysDup3 = 24;
+inline constexpr uint32_t kSysFcntl = 25;
 inline constexpr uint32_t kSysFaccessat = 48;
 inline constexpr uint32_t kSysOpenat = 56;
 inline constexpr uint32_t kSysMkdirat = 34;

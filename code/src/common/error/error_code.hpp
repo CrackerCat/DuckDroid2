@@ -23,6 +23,7 @@ enum class ErrorCode : int {
     BadFileDescriptor,
     IsDirectory,
     NotDirectory,
+    NotSeekable, // ESPIPE: a pipe/socket-like description
 };
 
 constexpr std::string_view to_string(ErrorCode code) noexcept {
@@ -53,6 +54,8 @@ constexpr std::string_view to_string(ErrorCode code) noexcept {
         return "is-directory";
     case ErrorCode::NotDirectory:
         return "not-directory";
+    case ErrorCode::NotSeekable:
+        return "not-seekable";
     }
     return "unknown";
 }

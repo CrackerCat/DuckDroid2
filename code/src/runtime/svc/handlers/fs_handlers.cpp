@@ -40,6 +40,24 @@ constexpr size_t kStatGidOffset = 28;
 
 constexpr uint32_t kModeCharacter = 0020000;
 
+// fcntl commands and arm64 flag values bionic may pass.
+constexpr int64_t kFcntlDupFd = 0;
+constexpr int64_t kFcntlGetFd = 1;
+constexpr int64_t kFcntlSetFd = 2;
+constexpr int64_t kFcntlGetFl = 3;
+constexpr int64_t kFcntlSetFl = 4;
+constexpr int64_t kFcntlGetLk = 5;
+constexpr int64_t kFcntlSetLk = 6;
+constexpr int64_t kFcntlSetLkW = 7;
+constexpr int64_t kFcntlDupFdCloexec = 1030;
+constexpr uint64_t kOFdCloexec = 0x80000;
+constexpr uint64_t kOWrOnly = 1;
+// struct flock on arm64: l_type(2) l_whence(2) l_start(8) l_len(8) l_pid(4)
+// plus padding. F_UNLCK == 2; F_RDLCK is 0, so a zeroed struct would claim a
+// read lock.
+constexpr size_t kFlockSize = 32;
+constexpr uint8_t kFUnlck = 2;
+
 int64_t toErrno(const Error &error)
 {
 	switch (error.code) {
@@ -59,6 +77,8 @@ int64_t toErrno(const Error &error)
 		return kError(kEisdir);
 	case ErrorCode::NotDirectory:
 		return kError(kEnotdir);
+	case ErrorCode::NotSeekable:
+		return kError(kEspipe);
 	case ErrorCode::OutOfMemory:
 		return kError(kEnomem);
 	default:
@@ -326,6 +346,91 @@ int64_t sysMkdirat(SyscallContext &)
 	return kError(kErofs);
 }
 
+int64_t sysDup(SyscallContext &ctx)
+{
+	auto duplicated = ctx.vfs.duplicate(ctx.args[0]);
+	return duplicated.ok() ? static_cast<int64_t>(duplicated.value()) : toErrno(duplicated.error());
+}
+
+int64_t sysDup3(SyscallContext &ctx)
+{
+	const uint64_t old_fd = ctx.args[0];
+	const uint64_t new_fd = ctx.args[1];
+	const uint64_t flags = ctx.args[2];
+	if ((flags & ~kOFdCloexec) != 0 || old_fd == new_fd)
+	{
+		// dup3 only accepts O_CLOEXEC, and refuses identical descriptors
+		// (dup2 accepts them as a no-op).
+		return kError(kEinval);
+	}
+	auto moved = ctx.vfs.duplicateTo(old_fd, new_fd);
+	return moved.ok() ? static_cast<int64_t>(new_fd) : toErrno(moved.error());
+}
+
+bool fdIsOpen(SyscallContext &ctx, uint64_t fd)
+{
+	return fd <= 2 || ctx.vfs.find(fd) != nullptr;
+}
+
+int64_t sysFcntl(SyscallContext &ctx)
+{
+	const uint64_t fd = ctx.args[0];
+	const int64_t command = static_cast<int64_t>(ctx.args[1]);
+
+	switch (command)
+	{
+	case kFcntlDupFd:
+	case kFcntlDupFdCloexec:
+	{
+		auto duplicated = ctx.vfs.duplicate(fd, ctx.args[2]);
+		return duplicated.ok() ? static_cast<int64_t>(duplicated.value()) :
+					 toErrno(duplicated.error());
+	}
+	case kFcntlGetFd:
+	case kFcntlSetFd:
+		// No CLOEXEC state is tracked: descriptors never survive an exec
+		// here, and every guest descriptor is already close-on-exec from the
+		// runtime's point of view.
+		return fdIsOpen(ctx, fd) ? 0 : kError(kEbadf);
+	case kFcntlGetFl:
+	{
+		if (fd <= 2)
+		{
+			return fd == 0 ? 0 : static_cast<int64_t>(kOWrOnly);
+		}
+		vfs::File *file = ctx.vfs.find(fd);
+		if (file == nullptr)
+		{
+			return kError(kEbadf);
+		}
+		// openat only admits read-only opens, so the access mode is derived
+		// from the description.
+		return file->writable() ? static_cast<int64_t>(kOWrOnly) : 0;
+	}
+	case kFcntlSetFl:
+		return fdIsOpen(ctx, fd) ? 0 : kError(kEbadf);
+	case kFcntlGetLk:
+	{
+		if (!fdIsOpen(ctx, fd))
+		{
+			return kError(kEbadf);
+		}
+		std::array<uint8_t, kFlockSize> lock{};
+		lock[0] = kFUnlck;
+		auto written = ctx.memory.write(GuestVA{ ctx.args[2] }, lock.data(), lock.size());
+		return written.ok() ? 0 : kError(kEfault);
+	}
+	case kFcntlSetLk:
+	case kFcntlSetLkW:
+		// No lock manager: report the lock as taken. A guest that depends on
+		// cross-process exclusion would need a real one, but the runtime is
+		// process-isolated per instance.
+		return fdIsOpen(ctx, fd) ? 0 : kError(kEbadf);
+	default:
+		return kError(kEinval);
+	}
+}
+
 int64_t sysFstat(SyscallContext &ctx)
 {
 	const uint64_t fd = ctx.args[0];
@@ -369,6 +474,12 @@ std::optional<int64_t> handleFsSyscall(SyscallContext &ctx, uint32_t number)
 		return sysFstat(ctx);
 	case kSysMkdirat:
 		return sysMkdirat(ctx);
+	case kSysDup:
+		return sysDup(ctx);
+	case kSysDup3:
+		return sysDup3(ctx);
+	case kSysFcntl:
+		return sysFcntl(ctx);
 	default:
 		return std::nullopt;
 	}

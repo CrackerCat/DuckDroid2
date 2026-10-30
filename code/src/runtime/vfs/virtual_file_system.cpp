@@ -285,6 +285,60 @@ Result<FileStat> VirtualFileSystem::statFd(uint64_t fd)
 	return file->stat();
 }
 
+Result<std::shared_ptr<File> > VirtualFileSystem::describe(uint64_t fd)
+{
+	if (fd <= 2)
+	{
+		std::shared_ptr<StdioFile> &slot = stdio_[fd];
+		if (!slot)
+		{
+			slot = std::make_shared<StdioFile>(static_cast<int>(fd));
+		}
+		return std::static_pointer_cast<File>(slot);
+	}
+	std::shared_ptr<File> file = fds_.shared(fd);
+	if (!file)
+	{
+		return Error{ ErrorCode::BadFileDescriptor, "fd is not open" };
+	}
+	return file;
+}
+
+Result<uint64_t> VirtualFileSystem::duplicate(uint64_t fd, uint64_t minimum)
+{
+	auto file = describe(fd);
+	if (!file.ok())
+	{
+		return file.error();
+	}
+	return fds_.insertShared(file.value(), minimum);
+}
+
+Result<void> VirtualFileSystem::duplicateTo(uint64_t fd, uint64_t target)
+{
+	if (fd == target)
+	{
+		// dup2 on an open descriptor is a successful no-op; validate the
+		// source so a closed fd still reports EBADF.
+		auto source = describe(fd);
+		if (!source.ok())
+		{
+			return source.error();
+		}
+		return {};
+	}
+	if (target <= 2)
+	{
+		return Error{ ErrorCode::BadFileDescriptor, "stdin/stdout/stderr are fixed" };
+	}
+	auto file = describe(fd);
+	if (!file.ok())
+	{
+		return file.error();
+	}
+	return fds_.assign(target, file.value());
+}
+
 Result<void> VirtualFileSystem::access(uint64_t dirfd, std::string_view path, uint64_t mode)
 {
 	auto resolved = resolvePath(dirfd, path);

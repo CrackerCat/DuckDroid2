@@ -36,6 +36,11 @@ struct Module
 	std::vector<ElfSymbol> symbols;
 	std::vector<std::string> needed;
 
+	// Guest copy of the program header table (dl_iterate_phdr). Link-time
+	// entries: p_vaddr is relative to `base`, as the ELF file has them.
+	GuestVA phdr;
+	uint16_t phnum = 0;
+
 	ElfTlsTemplate tls;
 	bool has_tls = false;
 	int64_t tls_offset = 0;        // relative to the thread pointer

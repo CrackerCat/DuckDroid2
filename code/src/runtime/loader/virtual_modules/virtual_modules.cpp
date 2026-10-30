@@ -1,15 +1,20 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "runtime/loader/virtual_modules/virtual_modules.hpp"
 
+#include <array>
 #include <cstring>
 #include <iterator>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include <unistd.h>
 
 #include "runtime/loader/bionic/shared_globals.hpp"
+#include "runtime/loader/dl_service.hpp"
 #include "runtime/memory/address_space.hpp"
 #include "runtime/threads/tls/tls_layout_android13.hpp"
 
@@ -118,11 +123,295 @@ bool matchesAny(const VirtualEntry *entries, size_t count, std::string_view symb
 
 } // namespace
 
+// State behind the __loader_dl* thunks. Shared with the thunks (they capture
+// the shared_ptr) so it does not depend on this object's lifetime, and so
+// setDlService can land after the thunks were created.
+struct DlStubState
+{
+	RuntimeMemory *memory = nullptr;
+	DlService *service = nullptr;
+	// Recursive: a constructor run by dlopen may itself call dlopen.
+	std::recursive_mutex mutex;
+	// Bump arena for guest-visible strings and dl_phdr_info records.
+	GuestVA scratch;
+	uint64_t scratch_size = 0;
+	uint64_t scratch_used = 0;
+	GuestVA error;
+	bool error_pending = false;
+};
+
+namespace
+{
+
+constexpr uint64_t kDlScratchSize = 64 * 1024;
+constexpr uint64_t kMaxGuestString = 4096;
+// bionic's struct dl_phdr_info on LP64: addr, name, phdr, phnum, adds, subs,
+// tls_modid, tls_data.
+constexpr uint64_t kDlPhdrInfoSize = 64;
+constexpr uint64_t kDlPhdrNumOffset = 24;
+
+std::optional<std::string> readGuestCString(RuntimeMemory &memory, GuestVA address)
+{
+	std::string text;
+	text.reserve(64);
+	for (uint64_t i = 0; i < kMaxGuestString; ++i)
+	{
+		char ch = 0;
+		if (!memory.read(GuestVA{ address.value() + i }, &ch, 1).ok())
+		{
+			return std::nullopt;
+		}
+		if (ch == '\0')
+		{
+			return text;
+		}
+		text.push_back(ch);
+	}
+	return std::nullopt;
+}
+
+GuestVA allocScratch(DlStubState &state, uint64_t size, uint64_t align)
+{
+	if (state.memory == nullptr)
+	{
+		return GuestVA{};
+	}
+	if (state.scratch.value() == 0)
+	{
+		auto mapped = state.memory->map(kDlScratchSize, PermReadWrite, "dl-scratch");
+		if (!mapped.ok())
+		{
+			return GuestVA{};
+		}
+		state.scratch = mapped.value();
+		state.scratch_size = kDlScratchSize;
+		state.scratch_used = 0;
+	}
+	const uint64_t start = alignUp(state.scratch_used, align == 0 ? 8 : align);
+	if (size > state.scratch_size || start > state.scratch_size - size)
+	{
+		return GuestVA{};
+	}
+	state.scratch_used = start + size;
+	return GuestVA{ state.scratch.value() + start };
+}
+
+GuestVA writeGuestString(DlStubState &state, std::string_view text)
+{
+	const GuestVA at = allocScratch(state, text.size() + 1, 8);
+	if (at.value() == 0)
+	{
+		return GuestVA{};
+	}
+	if (!text.empty() && !state.memory->write(at, text.data(), text.size()).ok())
+	{
+		return GuestVA{};
+	}
+	const char terminator = '\0';
+	if (!state.memory->write(GuestVA{ at.value() + text.size() }, &terminator, 1).ok())
+	{
+		return GuestVA{};
+	}
+	return at;
+}
+
+// The message stays readable by the guest until dlerror consumes it.
+void recordError(DlStubState &state, std::string_view message)
+{
+	state.error_pending = true;
+	state.error = writeGuestString(state, message);
+}
+
+} // namespace
+
 VirtualBionic::VirtualBionic(RuntimeMemory &memory, ThunkTable &thunks, bool enable_test_import_stubs)
 	: memory_(memory)
 	, thunks_(thunks)
 	, test_stubs_(enable_test_import_stubs)
 {
+	dl_ = std::make_shared<DlStubState>();
+	dl_->memory = &memory_;
+}
+
+void VirtualBionic::setDlService(DlService *service)
+{
+	std::lock_guard<std::recursive_mutex> lock(dl_->mutex);
+	dl_->service = service;
+}
+
+std::optional<HostStub> VirtualBionic::makeDlStub(std::string_view symbol)
+{
+	const std::shared_ptr<DlStubState> state = dl_;
+
+	if (symbol == "__loader_dlopen" || symbol == "__loader_android_dlopen_ext")
+	{
+		// Bionic passes the caller's return address last: argument 3 for
+		// __loader_dlopen, 4 for android_dlopen_ext (after extinfo).
+		const bool extended = symbol == "__loader_android_dlopen_ext";
+		return HostStub{ [state, extended](HostCallArgs &args) -> int64_t {
+			std::lock_guard<std::recursive_mutex> lock(state->mutex);
+			if (state->service == nullptr)
+			{
+				return 0;
+			}
+			std::string name;
+			if (args.x[0] != 0)
+			{
+				auto text = readGuestCString(*state->memory, GuestVA{ args.x[0] });
+				if (!text.has_value())
+				{
+					recordError(*state, "dlopen: unreadable filename");
+					return 0;
+				}
+				name = std::move(text).value();
+			}
+			// android_dlextinfo is ignored: no reserved address, no namespace.
+			auto opened = state->service->open(name, args.x[extended ? 3 : 2], args.call_guest);
+			if (!opened.ok())
+			{
+				recordError(*state, opened.error().message);
+				return 0;
+			}
+			return static_cast<int64_t>(opened.value());
+		} };
+	}
+
+	if (symbol == "__loader_dlsym" || symbol == "__loader_dlvsym")
+	{
+		// __loader_dlvsym(handle, symbol, version, caller_addr): same first two
+		// arguments, no symbol versions in this runtime.
+		return HostStub{ [state](HostCallArgs &args) -> int64_t {
+			std::lock_guard<std::recursive_mutex> lock(state->mutex);
+			if (state->service == nullptr)
+			{
+				return 0;
+			}
+			if (args.x[1] == 0)
+			{
+				recordError(*state, "dlsym: null symbol");
+				return 0;
+			}
+			auto text = readGuestCString(*state->memory, GuestVA{ args.x[1] });
+			if (!text.has_value())
+			{
+				recordError(*state, "dlsym: unreadable symbol");
+				return 0;
+			}
+			auto found = state->service->symbol(args.x[0], text.value());
+			if (!found.ok())
+			{
+				recordError(*state, found.error().message);
+				return 0;
+			}
+			return static_cast<int64_t>(found.value().value());
+		} };
+	}
+
+	if (symbol == "__loader_dlerror")
+	{
+		return HostStub{ [state](HostCallArgs &) -> int64_t {
+			std::lock_guard<std::recursive_mutex> lock(state->mutex);
+			if (!state->error_pending)
+			{
+				return 0;
+			}
+			state->error_pending = false;
+			return static_cast<int64_t>(state->error.value());
+		} };
+	}
+
+	if (symbol == "__loader_dlclose")
+	{
+		return HostStub{ [state](HostCallArgs &args) -> int64_t {
+			std::lock_guard<std::recursive_mutex> lock(state->mutex);
+			if (state->service != nullptr)
+			{
+				state->service->close(args.x[0]);
+			}
+			return 0;
+		} };
+	}
+
+	if (symbol == "__loader_dladdr")
+	{
+		return HostStub{ [state](HostCallArgs &args) -> int64_t {
+			std::lock_guard<std::recursive_mutex> lock(state->mutex);
+			if (state->service == nullptr || args.x[1] == 0)
+			{
+				return 0;
+			}
+			state->scratch_used = 0;
+			DlModuleInfo module;
+			std::string symbol_name;
+			uint64_t symbol_address = 0;
+			if (!state->service->address(args.x[0], module, symbol_name, symbol_address))
+			{
+				return 0;
+			}
+			// Dl_info { dli_fname, dli_fbase, dli_sname, dli_saddr }.
+			const GuestVA path = writeGuestString(*state, module.path);
+			const GuestVA name = writeGuestString(*state, symbol_name);
+			const uint64_t fields[4] = { path.value(), module.base, name.value(), symbol_address };
+			if (!state->memory->write(GuestVA{ args.x[1] }, fields, sizeof(fields)).ok())
+			{
+				return 0;
+			}
+			return 1;
+		} };
+	}
+
+	if (symbol == "__loader_dl_iterate_phdr")
+	{
+		return HostStub{ [state](HostCallArgs &args) -> int64_t {
+			std::lock_guard<std::recursive_mutex> lock(state->mutex);
+			if (state->service == nullptr || args.x[0] == 0 || !args.call_guest)
+			{
+				return 0;
+			}
+			state->scratch_used = 0;
+			const uint64_t callback = args.x[0];
+			const uint64_t data = args.x[1];
+			for (const DlModuleInfo &module : state->service->moduleList())
+			{
+				const GuestVA info = allocScratch(*state, kDlPhdrInfoSize, 16);
+				if (info.value() == 0)
+				{
+					return 0;
+				}
+				const std::array<uint8_t, kDlPhdrInfoSize> zero{};
+				if (!state->memory->write(info, zero.data(), zero.size()).ok())
+				{
+					return 0;
+				}
+				const GuestVA name = writeGuestString(*state, module.path);
+				const uint64_t fields[3] = { module.base, name.value(), module.phdr.value() };
+				if (!state->memory->write(info, fields, sizeof(fields)).ok())
+				{
+					return 0;
+				}
+				const uint16_t phnum = module.phnum;
+				if (!state->memory
+					     ->write(GuestVA{ info.value() + kDlPhdrNumOffset }, &phnum, sizeof(phnum))
+					     .ok())
+				{
+					return 0;
+				}
+				auto called = args.call_guest(GuestVA{ callback },
+					{ info.value(), kDlPhdrInfoSize, data });
+				if (!called.ok())
+				{
+					return 0;
+				}
+				if (called.value() != 0)
+				{
+					return called.value();
+				}
+			}
+			return 0;
+		} };
+	}
+
+	return std::nullopt;
 }
 
 bool VirtualBionic::isVirtualModule(std::string_view soname) const noexcept
@@ -222,8 +511,14 @@ Result<HostStub> VirtualBionic::makeStub(std::string_view symbol)
 		} };
 	}
 
-	// ld-android.so: binding-only stubs. Returning 0 is safe for load; every
-	// other symbol that needs real behaviour is picked up later in M4.6.
+	// The dynamic-linking entry points are real now: libc's dlopen() forwards
+	// here, and an SDK that loads a sub-library at runtime depends on it.
+	if (auto dl_stub = makeDlStub(symbol); dl_stub.has_value())
+	{
+		return std::move(dl_stub).value();
+	}
+
+	// Remaining ld-android.so symbols: binding-only stubs.
 	if (matchesAny(kLinkerEntries, std::size(kLinkerEntries), symbol))
 	{
 		return HostStub{ [](HostCallArgs &) -> int64_t { return 0; } };

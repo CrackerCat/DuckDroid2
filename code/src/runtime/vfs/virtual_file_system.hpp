@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -76,6 +77,15 @@ class VirtualFileSystem
 		return fds_.remove(fd);
 	}
 
+	// dup(2) / F_DUPFD: lowest free descriptor >= `minimum` for the same open
+	// file description. Standard streams are materialized on demand, so
+	// dup(1) yields a descriptor whose write() still reaches the host.
+	[[nodiscard]] Result<uint64_t> duplicate(uint64_t fd,
+		uint64_t minimum = FdTable::kFirstGuestFd);
+	// dup2(2)/dup3(2) onto an exact descriptor. Replacing 0/1/2 is refused:
+	// they are the host's, and the syscall handlers address them by number.
+	[[nodiscard]] Result<void> duplicateTo(uint64_t fd, uint64_t target);
+
 	[[nodiscard]] const VfsConfig &config() const
 	{
 		return config_;
@@ -88,6 +98,9 @@ class VirtualFileSystem
 		bool directory = false;
 	};
 
+	// Open file description behind `fd`. Standard streams get a persistent
+	// StdioFile so repeated dups share it.
+	[[nodiscard]] Result<std::shared_ptr<File> > describe(uint64_t fd);
 	[[nodiscard]] Result<std::string> resolvePath(uint64_t dirfd, std::string_view path) const;
 	[[nodiscard]] Result<HostPath> resolveHost(const std::string &guest_path) const;
 	[[nodiscard]] Result<std::unique_ptr<File> > openPath(const std::string &guest_path,
@@ -97,6 +110,7 @@ class VirtualFileSystem
 	RuntimeMemory &memory_;
 	VfsConfig config_;
 	FdTable fds_;
+	std::array<std::shared_ptr<StdioFile>, 3> stdio_;
 	std::function<std::string(std::string_view)> region_names_;
 	std::function<uint64_t()> thread_count_;
 	std::function<Result<std::pair<GuestVA, uint64_t> >()> auxv_;

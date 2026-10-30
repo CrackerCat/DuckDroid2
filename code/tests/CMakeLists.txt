@@ -115,6 +115,37 @@ add_custom_command(
     DEPENDS "${DUCKEMU_SO_SOURCE_DIR}/libmissing.c"
     COMMENT "Building guest .so libmissing.so")
 
+# 04d_dlopen: a runtime-loaded plugin (own constructor) and a caller that uses
+# the ld-android.so entry points the way libc's dlopen/dlsym do.
+add_custom_command(
+    OUTPUT "${DUCKEMU_SO_BUILD_DIR}/libplug.so"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${DUCKEMU_SO_BUILD_DIR}"
+    COMMAND ${DUCKEMU_CLANG_EXECUTABLE} ${DUCKEMU_GUEST_SO_FLAGS}
+            -Wl,-soname,libplug.so "${DUCKEMU_SO_SOURCE_DIR}/libplug.c"
+            -o "${DUCKEMU_SO_BUILD_DIR}/libplug.so"
+    DEPENDS "${DUCKEMU_SO_SOURCE_DIR}/libplug.c"
+    COMMENT "Building guest .so libplug.so")
+
+add_custom_command(
+    OUTPUT "${DUCKEMU_SO_BUILD_DIR}/libdlcaller.so"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${DUCKEMU_SO_BUILD_DIR}"
+    COMMAND ${DUCKEMU_CLANG_EXECUTABLE} ${DUCKEMU_GUEST_SO_FLAGS}
+            -Wl,-soname,libdlcaller.so "${DUCKEMU_SO_SOURCE_DIR}/libdlcaller.c"
+            -o "${DUCKEMU_SO_BUILD_DIR}/libdlcaller.so"
+    DEPENDS "${DUCKEMU_SO_SOURCE_DIR}/libdlcaller.c"
+    COMMENT "Building guest .so libdlcaller.so")
+
+# 04e_dup_fcntl: raw-syscall fixture for dup/dup3/fcntl.
+add_custom_command(
+    OUTPUT "${DUCKEMU_SO_BUILD_DIR}/libfd.so"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${DUCKEMU_SO_BUILD_DIR}"
+    COMMAND ${DUCKEMU_CLANG_EXECUTABLE} ${DUCKEMU_GUEST_SO_FLAGS}
+            -fno-stack-protector -fno-builtin
+            -Wl,-soname,libfd.so "${DUCKEMU_SO_SOURCE_DIR}/libfd.c"
+            -o "${DUCKEMU_SO_BUILD_DIR}/libfd.so"
+    DEPENDS "${DUCKEMU_SO_SOURCE_DIR}/libfd.c"
+    COMMENT "Building guest .so libfd.so")
+
 # The runtime view of the fixture: only what the loader may legitimately open.
 # liblog.so and libc.so exist but are not ELF, so a loader that consults the
 # filesystem before the virtual module table fails here instead of passing.
@@ -127,6 +158,9 @@ add_custom_command(
            "${DUCKEMU_SO_RUNTIME_DIR}/libb.so"
            "${DUCKEMU_SO_RUNTIME_DIR}/libmissing.so"
            "${DUCKEMU_SO_RUNTIME_DIR}/libtls.so"
+           "${DUCKEMU_SO_RUNTIME_DIR}/libplug.so"
+           "${DUCKEMU_SO_RUNTIME_DIR}/libdlcaller.so"
+           "${DUCKEMU_SO_RUNTIME_DIR}/libfd.so"
     COMMAND ${CMAKE_COMMAND} -E make_directory "${DUCKEMU_SO_RUNTIME_DIR}"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${DUCKEMU_SO_BUILD_DIR}/liba.so" "${DUCKEMU_SO_RUNTIME_DIR}/liba.so"
@@ -136,16 +170,28 @@ add_custom_command(
             "${DUCKEMU_SO_BUILD_DIR}/libmissing.so" "${DUCKEMU_SO_RUNTIME_DIR}/libmissing.so"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${DUCKEMU_SO_BUILD_DIR}/libtls.so" "${DUCKEMU_SO_RUNTIME_DIR}/libtls.so"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${DUCKEMU_SO_BUILD_DIR}/libplug.so" "${DUCKEMU_SO_RUNTIME_DIR}/libplug.so"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${DUCKEMU_SO_BUILD_DIR}/libdlcaller.so" "${DUCKEMU_SO_RUNTIME_DIR}/libdlcaller.so"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${DUCKEMU_SO_BUILD_DIR}/libfd.so" "${DUCKEMU_SO_RUNTIME_DIR}/libfd.so"
     DEPENDS "${DUCKEMU_SO_BUILD_DIR}/liba.so"
             "${DUCKEMU_SO_BUILD_DIR}/libb.so"
             "${DUCKEMU_SO_BUILD_DIR}/libmissing.so"
-            "${DUCKEMU_SO_BUILD_DIR}/libtls.so")
+            "${DUCKEMU_SO_BUILD_DIR}/libtls.so"
+            "${DUCKEMU_SO_BUILD_DIR}/libplug.so"
+            "${DUCKEMU_SO_BUILD_DIR}/libdlcaller.so"
+            "${DUCKEMU_SO_BUILD_DIR}/libfd.so")
 
 add_custom_target(guest_so ALL
     DEPENDS "${DUCKEMU_SO_RUNTIME_DIR}/liba.so"
             "${DUCKEMU_SO_RUNTIME_DIR}/libb.so"
             "${DUCKEMU_SO_RUNTIME_DIR}/libmissing.so"
-            "${DUCKEMU_SO_RUNTIME_DIR}/libtls.so")
+            "${DUCKEMU_SO_RUNTIME_DIR}/libtls.so"
+            "${DUCKEMU_SO_RUNTIME_DIR}/libplug.so"
+            "${DUCKEMU_SO_RUNTIME_DIR}/libdlcaller.so"
+            "${DUCKEMU_SO_RUNTIME_DIR}/libfd.so")
 
 # ---------------------------------------------------------------------------
 # Test support
@@ -190,6 +236,8 @@ endfunction()
 
 duckemu_add_loader_test(04_so_load)
 duckemu_add_loader_test(04b_tlsdesc)
+duckemu_add_loader_test(04d_dlopen)
+duckemu_add_loader_test(04e_dup_fcntl)
 
 # ---------------------------------------------------------------------------
 # M4.5 gate: real bionic from the local Android environment.

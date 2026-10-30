@@ -34,8 +34,8 @@ struct FileStat
 	int64_t ctime_nanoseconds = 0;
 };
 
-// One open file description. The read offset lives here, so it will be shared
-// by dup'ed descriptors once dup exists.
+// One open file description. The read offset lives here, so dup'ed
+// descriptors share it: the descriptor table holds shared_ptr<File>.
 class File
 {
     public:
@@ -49,6 +49,34 @@ class File
 	[[nodiscard]] virtual Result<uint64_t> readAt(uint64_t offset, void *buffer, uint64_t count) = 0;
 	[[nodiscard]] virtual Result<uint64_t> write(const void *buffer, uint64_t count) = 0;
 	[[nodiscard]] virtual Result<uint64_t> seek(int64_t offset, int whence) = 0;
+};
+
+// Host stdio (fd 0/1/2) as a descriptor-table entry. The guest-visible 0/1/2
+// keep the fast path in the syscall handlers; this type only backs the copies
+// dup()/dup2()/F_DUPFD hand out, so `write(dup(1), ...)` still reaches the
+// host.
+class StdioFile final : public File
+{
+    public:
+	explicit StdioFile(int host_fd);
+
+	[[nodiscard]] std::string_view path() const override
+	{
+		return path_;
+	}
+	[[nodiscard]] bool writable() const override
+	{
+		return host_fd_ != 0;
+	}
+	[[nodiscard]] Result<FileStat> stat() override;
+	[[nodiscard]] Result<uint64_t> read(void *buffer, uint64_t count) override;
+	[[nodiscard]] Result<uint64_t> readAt(uint64_t offset, void *buffer, uint64_t count) override;
+	[[nodiscard]] Result<uint64_t> write(const void *buffer, uint64_t count) override;
+	[[nodiscard]] Result<uint64_t> seek(int64_t offset, int whence) override;
+
+    private:
+	int host_fd_ = 0;
+	std::string path_;
 };
 
 // Generated read-only file (/proc). The content is produced on first use and

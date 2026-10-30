@@ -9,6 +9,7 @@
 #include "runtime/jni/envs/envs.hpp"
 #include "runtime/jni/world/java_world.hpp"
 #include "runtime/loader/bionic/shared_globals.hpp"
+#include "runtime/loader/dl_service.hpp"
 #include "runtime/loader/module_loader.hpp"
 #include "runtime/memory/address_space.hpp"
 #include "runtime/observer/trace/svc_trace.hpp"
@@ -27,7 +28,7 @@ constexpr uint64_t kIfuncHwcap = 1ULL << 62;
 
 } // namespace
 
-struct RuntimeInstance::Impl
+struct RuntimeInstance::Impl : loader::DlService
 {
 	enum class State
 	{
@@ -83,10 +84,176 @@ struct RuntimeInstance::Impl
 		return {};
 	}
 
+	// loader::DlService. Reached from the __loader_dl* stubs while a guest
+	// thread runs; the stub's call_guest is the only way back into guest code
+	// from there, so it is threaded through open().
+	Result<uint64_t> open(std::string_view name,
+		uint64_t caller_address,
+		const GuestCall &call_guest) override;
+	Result<GuestVA> symbol(uint64_t handle, std::string_view name) override;
+	bool address(uint64_t address,
+		loader::DlModuleInfo &module,
+		std::string &symbol_name,
+		uint64_t &symbol_address) override;
+	std::vector<loader::DlModuleInfo> moduleList() override;
+	void close(uint64_t handle) override
+	{
+		(void)handle;
+	}
+
 	// Declared last: the scheduler references every member above and must be
 	// destroyed first so its host threads are joined while the rest is alive.
 	std::unique_ptr<threads::ThreadScheduler> scheduler;
 };
+
+Result<uint64_t> RuntimeInstance::Impl::open(std::string_view name,
+	uint64_t caller_address,
+	const GuestCall &call_guest)
+{
+	// dlopen(NULL) is the main-program handle; dlsym on it means the global
+	// scope, which symbol() maps back to lookupGlobal.
+	if (name.empty())
+	{
+		return loader::kMainProgramHandle;
+	}
+	if (state != State::Ready)
+	{
+		return Error{ ErrorCode::InvalidArgument, "instance is not ready to load modules" };
+	}
+	if (!call_guest)
+	{
+		return Error{ ErrorCode::Unsupported, "dlopen needs a guest call path" };
+	}
+
+	// bionic passes the caller's return address so the requester's directory
+	// participates in the search, exactly like a DT_NEEDED entry.
+	std::string directory;
+	if (caller_address != 0)
+	{
+		if (const loader::Module *caller = modules->registry().findContaining(caller_address))
+		{
+			directory = caller->directory;
+		}
+	}
+
+	auto loaded = modules->loadByName(name, directory);
+	if (!loaded.ok())
+	{
+		// Same rule as loadLibrary: a half-loaded graph never runs
+		// constructors.
+		(void)modules->takeInitializers();
+		(void)modules->takeIfuncFixups();
+		return loaded.error();
+	}
+
+	// The rest mirrors loadLibrary, but through the nested engine frame: this
+	// thread is already inside uc_emu_start, so scheduler->callFunction (which
+	// posts to the main thread) would deadlock or be refused.
+	const std::vector<loader::IfuncFixup> ifunc_fixups = modules->takeIfuncFixups();
+	if (!ifunc_fixups.empty())
+	{
+		if (auto ensured = ensureIfuncArg(); !ensured.ok())
+		{
+			return ensured.error();
+		}
+	}
+	for (const loader::IfuncFixup &fixup : ifunc_fixups)
+	{
+		auto called = call_guest(fixup.resolver, { kIfuncHwcap, ifunc_arg.value() });
+		if (!called.ok())
+		{
+			return called.error();
+		}
+		uint64_t value = static_cast<uint64_t>(called.value());
+		if (auto written = memory.write(fixup.place, &value, sizeof(value)); !written.ok())
+		{
+			return written.error();
+		}
+	}
+
+	for (const loader::Initializer &initializer : modules->takeInitializers())
+	{
+		auto called = call_guest(initializer.function, {});
+		if (!called.ok())
+		{
+			return called.error();
+		}
+	}
+
+	// JNI_OnLoad is not called: only System.loadLibrary invokes it.
+	return loaded.value();
+}
+
+Result<GuestVA> RuntimeInstance::Impl::symbol(uint64_t handle, std::string_view name)
+{
+	if (handle == 0 || handle == loader::kMainProgramHandle)
+	{
+		return modules->lookupGlobal(name);
+	}
+	return modules->lookup(handle, name);
+}
+
+bool RuntimeInstance::Impl::address(uint64_t address,
+	loader::DlModuleInfo &module,
+	std::string &symbol_name,
+	uint64_t &symbol_address)
+{
+	const loader::Module *found = modules->registry().findContaining(address);
+	if (found == nullptr)
+	{
+		return false;
+	}
+	module.path = found->path;
+	module.base = found->base;
+	module.phdr = found->phdr;
+	module.phnum = found->phnum;
+
+	// Nearest preceding definition that still encloses the address. STT_TLS
+	// values are offsets into the TLS block, not module addresses.
+	constexpr uint8_t kSttTls = 6;
+	uint64_t best = 0;
+	symbol_name.clear();
+	for (const loader::ElfSymbol &symbol : found->symbols)
+	{
+		if (symbol.undefined() || symbol.name.empty() || symbol.type() == kSttTls)
+		{
+			continue;
+		}
+		const uint64_t value = found->base + symbol.value;
+		if (value > address || value < best)
+		{
+			continue;
+		}
+		const bool encloses = symbol.size != 0 ? address < value + symbol.size : value == address;
+		if (!encloses)
+		{
+			continue;
+		}
+		best = value;
+		symbol_name = symbol.name;
+	}
+	symbol_address = best;
+	return true;
+}
+
+std::vector<loader::DlModuleInfo> RuntimeInstance::Impl::moduleList()
+{
+	std::vector<loader::DlModuleInfo> modules_out;
+	for (const auto &module : modules->registry().modules())
+	{
+		if (module->is_virtual)
+		{
+			continue;
+		}
+		loader::DlModuleInfo info;
+		info.path = module->path;
+		info.base = module->base;
+		info.phdr = module->phdr;
+		info.phnum = module->phnum;
+		modules_out.push_back(std::move(info));
+	}
+	return modules_out;
+}
 
 RuntimeInstance::RuntimeInstance(std::unique_ptr<Impl> impl)
 	: impl_(std::move(impl))
@@ -161,6 +328,7 @@ Result<std::unique_ptr<RuntimeInstance> > RuntimeInstance::create(const RuntimeC
 		config.library_search_paths,
 		config.enable_test_import_stubs);
 	impl->modules->setBionicGlobals(impl->bionic_globals.get());
+	impl->modules->setDlService(impl.get());
 
 	vfs::VfsConfig vfs_config;
 	vfs_config.pid = config.pid;

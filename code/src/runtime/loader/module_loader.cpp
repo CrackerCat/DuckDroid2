@@ -63,6 +63,28 @@ Result<uint64_t> ModuleLoader::load(std::string_view path)
 	return loadCanonical(std::string(path));
 }
 
+Result<uint64_t> ModuleLoader::loadByName(std::string_view name, std::string_view requester_directory)
+{
+	if (name.empty())
+	{
+		return Error{ ErrorCode::InvalidArgument, "empty library name" };
+	}
+	if (name.find('/') != std::string_view::npos)
+	{
+		return loadCanonical(std::string(name));
+	}
+	if (Module *existing = registry_.findBySoname(name))
+	{
+		return existing->handle;
+	}
+	auto resolved = vfs_.resolveModule(name, requester_directory);
+	if (!resolved.ok())
+	{
+		return resolved.error();
+	}
+	return loadCanonical(resolved.value());
+}
+
 Result<uint64_t> ModuleLoader::loadCanonical(const std::string &path)
 {
 	std::error_code error;
@@ -254,6 +276,33 @@ Result<Module *> ModuleLoader::loadImage(const std::string &path, ElfImage parse
 		unmapSegments(registered);
 		registry_.erase(registered.handle);
 		return applied.error();
+	}
+
+	// dl_iterate_phdr hands the guest the raw table (link-time entries, like
+	// bionic). Kept outside the module's PT_LOAD range; a failure here is a
+	// real allocation failure, not a load-time nicety.
+	if (!elf.phdrBytes().empty())
+	{
+		const uint64_t phdr_size = alignUp(elf.phdrBytes().size(), kGuestPageSize);
+		auto phdr = memory_.map(phdr_size, PermRead, "phdr:" + registered.soname);
+		if (!phdr.ok())
+		{
+			unmapSegments(registered);
+			registry_.erase(registered.handle);
+			return phdr.error();
+		}
+		auto written = memory_.write(phdr.value(),
+			elf.phdrBytes().data(),
+			elf.phdrBytes().size());
+		if (!written.ok())
+		{
+			memory_.unmap(phdr.value(), phdr_size);
+			unmapSegments(registered);
+			registry_.erase(registered.handle);
+			return written.error();
+		}
+		registered.phdr = phdr.value();
+		registered.phnum = elf.phnum();
 	}
 
 	registered.init_function = GuestVA{ elf.initFunction().has_value() ?

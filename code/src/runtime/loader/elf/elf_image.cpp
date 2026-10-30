@@ -149,6 +149,10 @@ Result<ElfImage> ElfImage::parse(std::vector<uint8_t> bytes, std::string_view so
 		return badImage(image.source_ + ": program headers are out of bounds");
 	}
 
+	image.phdr_bytes_.assign(image.bytes_.begin() + header.e_phoff,
+		image.bytes_.begin() + header.e_phoff + header.e_phnum * sizeof(Elf64_Phdr));
+	image.phnum_ = static_cast<uint16_t>(header.e_phnum);
+
 	// Copied, not pointed at: `program` is a loop-local.
 	Elf64_Phdr dynamic_header{};
 	bool has_dynamic = false;
