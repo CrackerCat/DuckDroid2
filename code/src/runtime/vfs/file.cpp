@@ -152,19 +152,21 @@ Result<uint64_t> MemoryFile::seek(int64_t offset, int whence)
 	return offset_;
 }
 
-HostFile::HostFile(std::string guest_path, int fd, uint64_t size)
-	: guest_path_(std::move(guest_path))
-	, fd_(fd)
-	, size_(size)
-{
-}
-
 HostFile::~HostFile()
 {
 	if (fd_ >= 0)
 	{
 		::close(fd_);
 	}
+}
+
+HostFile::HostFile(std::string guest_path, int fd, uint64_t size, bool writable, bool append)
+	: guest_path_(std::move(guest_path))
+	, fd_(fd)
+	, size_(size)
+	, writable_(writable)
+	, append_(append)
+{
 }
 
 Result<std::unique_ptr<HostFile> > HostFile::open(std::string guest_path, std::string host_path)
@@ -181,7 +183,32 @@ Result<std::unique_ptr<HostFile> > HostFile::open(std::string guest_path, std::s
 		return Error{ ErrorCode::Internal, "cannot stat " + host_path };
 	}
 	return std::unique_ptr<HostFile>(new HostFile(std::move(guest_path), fd,
-		static_cast<uint64_t>(info.st_size)));
+		static_cast<uint64_t>(info.st_size), false, false));
+}
+
+Result<std::unique_ptr<HostFile> > HostFile::openWritable(std::string guest_path,
+	std::string host_path,
+	int host_flags,
+	uint64_t access,
+	bool append,
+	uint64_t mode)
+{
+	const int fd = ::open(host_path.c_str(), host_flags | O_CLOEXEC, static_cast<mode_t>(mode));
+	if (fd < 0)
+	{
+		return Error{ ErrorCode::Internal, "cannot open " + host_path };
+	}
+	struct stat info = {};
+	if (::fstat(fd, &info) != 0 || !S_ISREG(info.st_mode))
+	{
+		::close(fd);
+		return Error{ ErrorCode::Internal, "cannot stat " + host_path };
+	}
+	return std::unique_ptr<HostFile>(new HostFile(std::move(guest_path),
+		fd,
+		static_cast<uint64_t>(info.st_size),
+		access != 0,
+		append));
 }
 
 Result<FileStat> HostFile::stat()
@@ -235,9 +262,56 @@ Result<uint64_t> HostFile::readAt(uint64_t offset, void *buffer, uint64_t count)
 	return static_cast<uint64_t>(received);
 }
 
-Result<uint64_t> HostFile::write(const void *, uint64_t)
+Result<uint64_t> HostFile::write(const void *buffer, uint64_t count)
 {
-	return Error{ ErrorCode::Unsupported, guest_path_ + " is read-only" };
+	if (!writable_)
+	{
+		return Error{ ErrorCode::Unsupported, guest_path_ + " is read-only" };
+	}
+	if (count == 0)
+	{
+		return uint64_t{ 0 };
+	}
+	// O_APPEND keeps appending through the host descriptor; otherwise the
+	// guest-visible offset decides where pwrite lands.
+	const ssize_t written = append_ ?
+					::write(fd_, buffer, static_cast<size_t>(count)) :
+					::pwrite(fd_, buffer, static_cast<size_t>(count),
+						static_cast<off_t>(offset_));
+	if (written < 0)
+	{
+		return ioError("write failed on " + guest_path_);
+	}
+	offset_ += static_cast<uint64_t>(written);
+	size_ = std::max(size_, offset_);
+	return static_cast<uint64_t>(written);
+}
+
+Result<void> HostFile::truncate(uint64_t size)
+{
+	if (!writable_)
+	{
+		return Error{ ErrorCode::Unsupported, guest_path_ + " is read-only" };
+	}
+	if (::ftruncate(fd_, static_cast<off_t>(size)) != 0)
+	{
+		return ioError("ftruncate failed on " + guest_path_);
+	}
+	size_ = size;
+	if (offset_ > size_)
+	{
+		offset_ = size_;
+	}
+	return {};
+}
+
+Result<void> HostFile::sync()
+{
+	if (::fsync(fd_) != 0)
+	{
+		return ioError("fsync failed on " + guest_path_);
+	}
+	return {};
 }
 
 Result<uint64_t> HostFile::seek(int64_t offset, int whence)

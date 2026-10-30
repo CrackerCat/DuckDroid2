@@ -76,6 +76,7 @@ int run_instance_host(const InstanceHostConfig &config)
 	runtime::RuntimeConfig runtime_config;
 	runtime_config.library_search_paths = config.app.library_search_paths;
 	runtime_config.filesystem_roots = config.app.filesystem_roots;
+	runtime_config.filesystem_write_root = config.app.filesystem_write_root;
 	runtime_config.trace_path = config.trace_path;
 
 	auto created = runtime::RuntimeInstance::create(runtime_config);

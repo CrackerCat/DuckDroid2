@@ -2,6 +2,7 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 
 #include "common/id/ids.hpp"
 
@@ -9,6 +10,8 @@ namespace duckemu::runtime::threads
 {
 
 class RuntimeThread;
+class PendingSyscall;
+enum class WakeReason : uint8_t;
 
 // clone(2) arguments after the dispatcher has read x0..x4. arm64 selects
 // CONFIG_CLONE_BACKWARDS, so the kernel order is
@@ -37,6 +40,18 @@ class ThreadSystem
 	// setting its state and letting the dispatcher stop the engine.
 	virtual int64_t futexWait(RuntimeThread &thread, GuestVA uaddr, uint32_t expected, uint64_t timeout_address) = 0;
 	virtual int64_t futexWake(GuestVA uaddr, int32_t count) = 0;
+
+	// Parks `thread` on `pending` (state Blocked) until wakeThread() or, when
+	// `timeout_us` is non-zero, the deadline. Returns 0 when parked, or a
+	// negative errno (the thread already has a pending syscall).
+	virtual int64_t parkThread(RuntimeThread &thread,
+		std::unique_ptr<PendingSyscall> pending,
+		uint64_t timeout_us) = 0;
+
+	// Tries to complete the thread's pending syscall with `reason`. Returns
+	// true when the thread actually woke; false for a spurious wake that left
+	// it blocked, or when there is nothing pending.
+	virtual bool wakeThread(RuntimeThread &thread, WakeReason reason) = 0;
 
 	virtual void exitThread(RuntimeThread &thread, int32_t code) = 0;
 	virtual void exitGroup(RuntimeThread &thread, int32_t code) = 0;

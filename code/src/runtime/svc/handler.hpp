@@ -46,5 +46,6 @@ std::optional<int64_t> handleMemorySyscall(SyscallContext &ctx, uint32_t number)
 std::optional<int64_t> handleFsSyscall(SyscallContext &ctx, uint32_t number);
 std::optional<int64_t> handleMiscSyscall(SyscallContext &ctx, uint32_t number);
 std::optional<int64_t> handleThreadSyscall(SyscallContext &ctx, uint32_t number);
+std::optional<int64_t> handleEventSyscall(SyscallContext &ctx, uint32_t number);
 
 } // namespace duckemu::runtime::svc

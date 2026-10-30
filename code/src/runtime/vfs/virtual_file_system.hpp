@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
+#include <unordered_map>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -19,6 +21,7 @@
 namespace duckemu::runtime
 {
 class RuntimeMemory;
+class RuntimeClock;
 }
 
 namespace duckemu::runtime::vfs
@@ -33,6 +36,19 @@ struct VfsConfig
 	// exposed read-only, after canonicalising and checking the result stays
 	// inside the root (symlinks may not escape).
 	std::vector<std::string> host_roots;
+
+	// Host directory representing guest "/" for writes. It overlays the
+	// read-only roots: open/stat try it first. Empty means no writes (EROFS).
+	std::string write_root;
+
+	// Owner stamped on every stat result; the device profile supplies the
+	// target's app uid.
+	uint32_t uid = 1000;
+	uint32_t gid = 1000;
+
+	// When wall time is injected, stat timestamps come from it so a replay is
+	// byte-identical. Null keeps the host's file times.
+	RuntimeClock *clock = nullptr;
 };
 
 // The process-level file system seen by guest syscalls: a descriptor table
@@ -60,8 +76,26 @@ class VirtualFileSystem
 		thread_count_ = std::move(provider);
 	}
 
-	// openat(2). Access is read-only; O_WRONLY/O_RDWR answer EROFS.
-	[[nodiscard]] Result<uint64_t> open(uint64_t dirfd, std::string_view path, uint64_t flags);
+	// openat(2). Reads see the writable sandbox first, then the read-only
+	// roots. Write access, O_CREAT, O_TRUNC and O_APPEND require a writable
+	// sandbox; without one they answer EROFS.
+	[[nodiscard]] Result<uint64_t> open(uint64_t dirfd,
+		std::string_view path,
+		uint64_t flags,
+		uint64_t mode = 0666);
+
+	// unlinkat(2)/renameat(2). Both only reach inside the writable sandbox;
+	// a path that exists solely under a read-only root answers EROFS.
+	Result<void> mkdir(uint64_t dirfd, std::string_view path, uint64_t mode);
+	Result<void> unlink(uint64_t dirfd, std::string_view path, bool remove_directory);
+	Result<void> rename(uint64_t old_dirfd,
+		std::string_view old_path,
+		uint64_t new_dirfd,
+		std::string_view new_path);
+
+	// ftruncate(2)/fsync(2) on an open description.
+	Result<void> truncateFd(uint64_t fd, uint64_t size);
+	Result<void> syncFd(uint64_t fd);
 	// newfstatat(2) with a path. AT_EMPTY_PATH is handled by the caller.
 	[[nodiscard]] Result<FileStat> stat(uint64_t dirfd, std::string_view path);
 	[[nodiscard]] Result<FileStat> statFd(uint64_t fd);
@@ -76,6 +110,20 @@ class VirtualFileSystem
 	{
 		return fds_.remove(fd);
 	}
+
+	// Inserts an already-built description (eventfd/timerfd/epoll instances).
+	[[nodiscard]] Result<uint64_t> add(std::unique_ptr<File> file)
+	{
+		return fds_.insert(std::move(file));
+	}
+
+	// Wake source for blocking poll/epoll waits. Every guest-visible read or
+	// write notifies the callbacks; each waiter re-evaluates its own readiness
+	// and treats a wake without progress as spurious. Ids are used by
+	// removeActivityWaiter.
+	uint64_t addActivityWaiter(std::function<void()> callback);
+	void removeActivityWaiter(uint64_t id);
+	void notifyActivity();
 
 	// dup(2) / F_DUPFD: lowest free descriptor >= `minimum` for the same open
 	// file description. Standard streams are materialized on demand, so
@@ -98,6 +146,13 @@ class VirtualFileSystem
 		bool directory = false;
 	};
 
+	// Host path of `guest_path` inside the writable sandbox. Canonicalises the
+	// parent (never the leaf, which may not exist yet) and refuses escapes.
+	[[nodiscard]] Result<std::string> resolveWritePath(const std::string &guest_path,
+		bool create_parents) const;
+	// Stamps the configured owner and, when wall time is injected, the
+	// replayed timestamps onto a stat result.
+	void applyOwner(FileStat &stat) const;
 	// Open file description behind `fd`. Standard streams get a persistent
 	// StdioFile so repeated dups share it.
 	[[nodiscard]] Result<std::shared_ptr<File> > describe(uint64_t fd);
@@ -111,6 +166,12 @@ class VirtualFileSystem
 	VfsConfig config_;
 	FdTable fds_;
 	std::array<std::shared_ptr<StdioFile>, 3> stdio_;
+
+	// Guarded: notifyActivity runs on the writing guest thread while a waiter
+	// may be registering or being destroyed on its own thread.
+	std::mutex waiters_mutex_;
+	uint64_t next_waiter_id_ = 1;
+	std::unordered_map<uint64_t, std::function<void()> > activity_waiters_;
 	std::function<std::string(std::string_view)> region_names_;
 	std::function<uint64_t()> thread_count_;
 	std::function<Result<std::pair<GuestVA, uint64_t> >()> auxv_;

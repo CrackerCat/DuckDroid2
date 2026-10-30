@@ -13,6 +13,9 @@ enum class WakeReason : uint8_t
 	TimerExpired,
 	Signal,
 	ThreadExited,
+	// Some descriptor changed through a guest read/write; the waiter
+	// re-evaluates readiness and reports a spurious wake by returning nullopt.
+	PollWoke,
 };
 
 // A blocking syscall, created when the handler decides to sleep and attached

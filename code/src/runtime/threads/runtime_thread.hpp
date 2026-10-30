@@ -2,6 +2,7 @@
 #pragma once
 
 #include <array>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <memory>
@@ -101,6 +102,16 @@ struct RuntimeThread
 	std::optional<observer::SvcEvent> pending_event;
 	int64_t pending_result = 0;
 	bool pending_completed = false;
+
+	// Timed blocking syscalls (futex with a timeout, poll/epoll waits). The
+	// deadline is host steady time; `deadline_expired` is set by the wait loop
+	// and consumed once the thread holds the execution lock again, so the
+	// completion callback never touches guest memory concurrently.
+	bool has_deadline = false;
+	bool deadline_expired = false;
+	std::chrono::steady_clock::time_point deadline;
+	// Non-zero while this thread sits in the futex wait queue.
+	uint64_t futex_key = 0;
 
 	bool exit_requested = false;
 	int32_t exit_code = 0;

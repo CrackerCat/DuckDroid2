@@ -79,6 +79,8 @@ int64_t toErrno(const Error &error)
 		return kError(kEnotdir);
 	case ErrorCode::NotSeekable:
 		return kError(kEspipe);
+	case ErrorCode::WouldBlock:
+		return kError(kEagain);
 	case ErrorCode::OutOfMemory:
 		return kError(kEnomem);
 	default:
@@ -166,7 +168,13 @@ int64_t sysWrite(SyscallContext &ctx)
 		return kError(kEbadf);
 	}
 	auto written = file->write(buffer.data(), count);
-	return written.ok() ? static_cast<int64_t>(written.value()) : toErrno(written.error());
+	if (!written.ok())
+	{
+		return toErrno(written.error());
+	}
+	// A blocking poll/epoll may be waiting on this description.
+	ctx.vfs.notifyActivity();
+	return static_cast<int64_t>(written.value());
 }
 
 int64_t sysRead(SyscallContext &ctx)
@@ -209,6 +217,8 @@ int64_t sysRead(SyscallContext &ctx)
 	if (!copied.ok()) {
 		return kError(kEfault);
 	}
+	// A blocking poll/epoll may be waiting on this description.
+	ctx.vfs.notifyActivity();
 	return static_cast<int64_t>(read.value());
 }
 
@@ -273,11 +283,65 @@ int64_t sysOpenat(SyscallContext &ctx)
 	if (path_error != 0) {
 		return path_error;
 	}
-	auto opened = ctx.vfs.open(ctx.args[0], path, ctx.args[2]);
+	auto opened = ctx.vfs.open(ctx.args[0], path, ctx.args[2], ctx.args[3]);
 	if (!opened.ok()) {
 		return toErrno(opened.error());
 	}
 	return static_cast<int64_t>(opened.value());
+}
+
+int64_t sysUnlinkat(SyscallContext &ctx)
+{
+	std::string path;
+	const int64_t path_error = readPath(ctx, ctx.args[1], path);
+	if (path_error != 0)
+	{
+		return path_error;
+	}
+	// AT_REMOVEDIR selects rmdir(2); every other flag bit is refused as
+	// EINVAL by the kernel.
+	constexpr uint64_t kAtRemoveDir = 0x200;
+	if ((ctx.args[2] & ~kAtRemoveDir) != 0)
+	{
+		return kError(kEinval);
+	}
+	auto removed = ctx.vfs.unlink(ctx.args[0], path, (ctx.args[2] & kAtRemoveDir) != 0);
+	return removed.ok() ? 0 : toErrno(removed.error());
+}
+
+int64_t sysRenameat(SyscallContext &ctx)
+{
+	std::string old_path;
+	std::string new_path;
+	int64_t path_error = readPath(ctx, ctx.args[1], old_path);
+	if (path_error != 0)
+	{
+		return path_error;
+	}
+	path_error = readPath(ctx, ctx.args[3], new_path);
+	if (path_error != 0)
+	{
+		return path_error;
+	}
+	auto renamed = ctx.vfs.rename(ctx.args[0], old_path, ctx.args[2], new_path);
+	return renamed.ok() ? 0 : toErrno(renamed.error());
+}
+
+int64_t sysFtruncate(SyscallContext &ctx)
+{
+	const int64_t length = static_cast<int64_t>(ctx.args[1]);
+	if (length < 0)
+	{
+		return kError(kEinval);
+	}
+	auto truncated = ctx.vfs.truncateFd(ctx.args[0], static_cast<uint64_t>(length));
+	return truncated.ok() ? 0 : toErrno(truncated.error());
+}
+
+int64_t sysFsync(SyscallContext &ctx)
+{
+	auto synced = ctx.vfs.syncFd(ctx.args[0]);
+	return synced.ok() ? 0 : toErrno(synced.error());
 }
 
 int64_t sysFaccessat(SyscallContext &ctx)
@@ -338,12 +402,18 @@ int64_t sysNewfstatat(SyscallContext &ctx)
 	return writeStat(ctx, stat_address, stat);
 }
 
-// The guest file system is read-only: every host root is exposed RO and /proc
-// is virtual. A real kernel answers EROFS for mkdirat on such a mount, so the
-// guest gets that instead of an unimplemented-syscall warning.
-int64_t sysMkdirat(SyscallContext &)
+// Without a writable sandbox the mount is read-only and a real kernel answers
+// EROFS; with one, the directory is created inside it.
+int64_t sysMkdirat(SyscallContext &ctx)
 {
-	return kError(kErofs);
+	std::string path;
+	const int64_t path_error = readPath(ctx, ctx.args[1], path);
+	if (path_error != 0)
+	{
+		return path_error;
+	}
+	auto created = ctx.vfs.mkdir(ctx.args[0], path, ctx.args[2]);
+	return created.ok() ? 0 : toErrno(created.error());
 }
 
 int64_t sysDup(SyscallContext &ctx)
@@ -480,6 +550,15 @@ std::optional<int64_t> handleFsSyscall(SyscallContext &ctx, uint32_t number)
 		return sysDup3(ctx);
 	case kSysFcntl:
 		return sysFcntl(ctx);
+	case kSysUnlinkat:
+		return sysUnlinkat(ctx);
+	case kSysRenameat:
+		return sysRenameat(ctx);
+	case kSysFtruncate:
+		return sysFtruncate(ctx);
+	case kSysFsync:
+	case kSysFdatasync:
+		return sysFsync(ctx);
 	default:
 		return std::nullopt;
 	}

@@ -51,6 +51,17 @@ struct RuntimeConfig
 	// /system/lib64/libc.so). Empty means only /proc is readable.
 	std::vector<std::string> filesystem_roots;
 
+	// Per-instance writable sandbox. One host directory that overlays the
+	// read-only roots for guest "/": a file created through open(O_CREAT) or
+	// written lives here, and reads/stat see it before the read-only roots.
+	// Empty keeps the whole namespace read-only (EROFS).
+	std::string filesystem_write_root;
+
+	// Owner reported by stat(2) for every guest file. Device 画像 (DeviceProfile)
+	// replaces these with the target's values.
+	uint32_t file_uid = 1000;
+	uint32_t file_gid = 1000;
+
 	// Re-enables the M4 fixture virtual table (libc/liblog stubs). Off in
 	// production; 04_so_load turns it on to keep testing the thunk path.
 	bool enable_test_import_stubs = false;

@@ -331,6 +331,10 @@ int64_t SvcDispatcher::dispatchSyscall(uint32_t number, const std::array<uint64_
 	{
 		result = handleThreadSyscall(ctx, number);
 	}
+	if (!result.has_value())
+	{
+		result = handleEventSyscall(ctx, number);
+	}
 
 	int64_t value = 0;
 	if (result.has_value())

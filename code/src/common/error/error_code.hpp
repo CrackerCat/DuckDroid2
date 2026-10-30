@@ -24,6 +24,7 @@ enum class ErrorCode : int {
     IsDirectory,
     NotDirectory,
     NotSeekable, // ESPIPE: a pipe/socket-like description
+    WouldBlock,  // EAGAIN: the operation would have blocked
 };
 
 constexpr std::string_view to_string(ErrorCode code) noexcept {
@@ -56,6 +57,8 @@ constexpr std::string_view to_string(ErrorCode code) noexcept {
         return "not-directory";
     case ErrorCode::NotSeekable:
         return "not-seekable";
+    case ErrorCode::WouldBlock:
+        return "would-block";
     }
     return "unknown";
 }

@@ -335,6 +335,12 @@ Result<std::unique_ptr<RuntimeInstance> > RuntimeInstance::create(const RuntimeC
 	vfs_config.tid = config.tid;
 	vfs_config.progname = "duckemu";
 	vfs_config.host_roots = config.filesystem_roots;
+	vfs_config.write_root = config.filesystem_write_root;
+	vfs_config.uid = config.file_uid;
+	vfs_config.gid = config.file_gid;
+	// Injected wall time also stamps file metadata, so a replay sees the same
+	// stat(2) results.
+	vfs_config.clock = &impl->clock;
 	impl->files =
 		std::make_unique<vfs::VirtualFileSystem>(impl->memory, std::move(vfs_config));
 	impl->files->setAuxvProvider([globals = impl->bionic_globals.get()] {

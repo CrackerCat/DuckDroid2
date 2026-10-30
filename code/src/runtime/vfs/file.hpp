@@ -13,6 +13,25 @@
 namespace duckemu::runtime::vfs
 {
 
+// poll(2) bits. The guest-visible values match EPOLLIN/EPOLLOUT/EPOLLERR/
+// EPOLLHUP, so epoll_ctl can pass them through unchanged.
+inline constexpr uint32_t kPollIn = 0x001;
+inline constexpr uint32_t kPollOut = 0x004;
+inline constexpr uint32_t kPollErr = 0x008;
+inline constexpr uint32_t kPollHup = 0x010;
+
+enum class FileKind : uint8_t
+{
+	Regular = 0,
+	Memory,
+	Stdio,
+	Host,
+	Event, // eventfd
+	Timer, // timerfd
+	Epoll,
+	Pipe,
+};
+
 // File metadata in guest-neutral terms. fs_handlers encodes it into the arm64
 // kernel `struct stat` layout.
 struct FileStat
@@ -49,6 +68,31 @@ class File
 	[[nodiscard]] virtual Result<uint64_t> readAt(uint64_t offset, void *buffer, uint64_t count) = 0;
 	[[nodiscard]] virtual Result<uint64_t> write(const void *buffer, uint64_t count) = 0;
 	[[nodiscard]] virtual Result<uint64_t> seek(int64_t offset, int whence) = 0;
+
+	// ftruncate(2). Read-only and memory-backed descriptions answer
+	// Unsupported.
+	[[nodiscard]] virtual Result<void> truncate(uint64_t size)
+	{
+		(void)size;
+		return Error{ ErrorCode::Unsupported, "not truncatable" };
+	}
+	// fsync(2)/fdatasync(2). Open file descriptions are host-backed; synthetic
+	// ones are already durable.
+	[[nodiscard]] virtual Result<void> sync()
+	{
+		return {};
+	}
+
+	[[nodiscard]] virtual FileKind kind() const
+	{
+		return FileKind::Regular;
+	}
+	// Readiness for poll(2)/epoll: a subset of kPoll*. Regular files and
+	// /proc entries are always readable.
+	[[nodiscard]] virtual uint32_t pollEvents() const
+	{
+		return kPollIn;
+	}
 };
 
 // Host stdio (fd 0/1/2) as a descriptor-table entry. The guest-visible 0/1/2
@@ -67,6 +111,14 @@ class StdioFile final : public File
 	[[nodiscard]] bool writable() const override
 	{
 		return host_fd_ != 0;
+	}
+	[[nodiscard]] FileKind kind() const override
+	{
+		return FileKind::Stdio;
+	}
+	[[nodiscard]] uint32_t pollEvents() const override
+	{
+		return host_fd_ == 0 ? kPollIn : kPollOut;
 	}
 	[[nodiscard]] Result<FileStat> stat() override;
 	[[nodiscard]] Result<uint64_t> read(void *buffer, uint64_t count) override;
@@ -97,6 +149,10 @@ class MemoryFile final : public File
 	{
 		return false;
 	}
+	[[nodiscard]] FileKind kind() const override
+	{
+		return FileKind::Memory;
+	}
 	[[nodiscard]] Result<FileStat> stat() override;
 	[[nodiscard]] Result<uint64_t> read(void *buffer, uint64_t count) override;
 	[[nodiscard]] Result<uint64_t> readAt(uint64_t offset, void *buffer, uint64_t count) override;
@@ -112,12 +168,21 @@ class MemoryFile final : public File
 	uint64_t offset_ = 0;
 };
 
-// Read-only view of one host file. M4.6 exposes host directories read-only;
-// writable files arrive with the north-star target (M6).
+// One host file. The read-only open backs the read-only roots; the writable
+// open backs the per-instance sandbox and implements write/ftruncate/fsync.
 class HostFile final : public File
 {
     public:
 	static Result<std::unique_ptr<HostFile> > open(std::string guest_path, std::string host_path);
+
+	// `host_flags` is the translated O_* set (including O_CREAT/O_TRUNC/
+	// O_APPEND/O_EXCL); `access` is 0/1/2 and decides writable().
+	static Result<std::unique_ptr<HostFile> > openWritable(std::string guest_path,
+		std::string host_path,
+		int host_flags,
+		uint64_t access,
+		bool append,
+		uint64_t mode);
 
 	~HostFile() override;
 	HostFile(const HostFile &) = delete;
@@ -129,21 +194,33 @@ class HostFile final : public File
 	}
 	[[nodiscard]] bool writable() const override
 	{
-		return false;
+		return writable_;
+	}
+	[[nodiscard]] FileKind kind() const override
+	{
+		return FileKind::Host;
+	}
+	[[nodiscard]] uint32_t pollEvents() const override
+	{
+		return kPollIn | (writable_ ? kPollOut : 0);
 	}
 	[[nodiscard]] Result<FileStat> stat() override;
 	[[nodiscard]] Result<uint64_t> read(void *buffer, uint64_t count) override;
 	[[nodiscard]] Result<uint64_t> readAt(uint64_t offset, void *buffer, uint64_t count) override;
 	[[nodiscard]] Result<uint64_t> write(const void *buffer, uint64_t count) override;
 	[[nodiscard]] Result<uint64_t> seek(int64_t offset, int whence) override;
+	[[nodiscard]] Result<void> truncate(uint64_t size) override;
+	[[nodiscard]] Result<void> sync() override;
 
     private:
-	HostFile(std::string guest_path, int fd, uint64_t size);
+	HostFile(std::string guest_path, int fd, uint64_t size, bool writable, bool append);
 
 	std::string guest_path_;
 	int fd_ = -1;
 	uint64_t size_ = 0;
 	uint64_t offset_ = 0;
+	bool writable_ = false;
+	bool append_ = false;
 };
 
 } // namespace duckemu::runtime::vfs

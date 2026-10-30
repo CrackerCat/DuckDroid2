@@ -98,6 +98,7 @@ add_library(duckemu_runtime STATIC
   src/runtime/vfs/runtime_vfs.cpp
   src/runtime/vfs/file.cpp
   src/runtime/vfs/fd_table.cpp
+  src/runtime/vfs/event_file.cpp
   src/runtime/vfs/proc_fs.cpp
   src/runtime/vfs/virtual_file_system.cpp
   src/runtime/backend/unicorn/unicorn_engine.cpp
@@ -112,6 +113,7 @@ add_library(duckemu_runtime STATIC
   src/runtime/svc/syscall_names.cpp
   src/runtime/svc/handlers/memory_handlers.cpp
   src/runtime/svc/handlers/fs_handlers.cpp
+  src/runtime/svc/handlers/event_handlers.cpp
   src/runtime/svc/handlers/misc_handlers.cpp
   src/runtime/svc/handlers/thread_handlers.cpp
 )

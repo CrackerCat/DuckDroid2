@@ -146,6 +146,28 @@ add_custom_command(
     DEPENDS "${DUCKEMU_SO_SOURCE_DIR}/libfd.c"
     COMMENT "Building guest .so libfd.so")
 
+# 04f_vfs_write: raw-syscall fixture for the writable sandbox.
+add_custom_command(
+    OUTPUT "${DUCKEMU_SO_BUILD_DIR}/libwr.so"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${DUCKEMU_SO_BUILD_DIR}"
+    COMMAND ${DUCKEMU_CLANG_EXECUTABLE} ${DUCKEMU_GUEST_SO_FLAGS}
+            -fno-stack-protector -fno-builtin
+            -Wl,-soname,libwr.so "${DUCKEMU_SO_SOURCE_DIR}/libwr.c"
+            -o "${DUCKEMU_SO_BUILD_DIR}/libwr.so"
+    DEPENDS "${DUCKEMU_SO_SOURCE_DIR}/libwr.c"
+    COMMENT "Building guest .so libwr.so")
+
+# 04g_event_loop: raw-syscall fixture for eventfd/timerfd/poll/epoll.
+add_custom_command(
+    OUTPUT "${DUCKEMU_SO_BUILD_DIR}/libev.so"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${DUCKEMU_SO_BUILD_DIR}"
+    COMMAND ${DUCKEMU_CLANG_EXECUTABLE} ${DUCKEMU_GUEST_SO_FLAGS}
+            -fno-stack-protector -fno-builtin
+            -Wl,-soname,libev.so "${DUCKEMU_SO_SOURCE_DIR}/libev.c"
+            -o "${DUCKEMU_SO_BUILD_DIR}/libev.so"
+    DEPENDS "${DUCKEMU_SO_SOURCE_DIR}/libev.c"
+    COMMENT "Building guest .so libev.so")
+
 # The runtime view of the fixture: only what the loader may legitimately open.
 # liblog.so and libc.so exist but are not ELF, so a loader that consults the
 # filesystem before the virtual module table fails here instead of passing.
@@ -161,6 +183,8 @@ add_custom_command(
            "${DUCKEMU_SO_RUNTIME_DIR}/libplug.so"
            "${DUCKEMU_SO_RUNTIME_DIR}/libdlcaller.so"
            "${DUCKEMU_SO_RUNTIME_DIR}/libfd.so"
+           "${DUCKEMU_SO_RUNTIME_DIR}/libwr.so"
+           "${DUCKEMU_SO_RUNTIME_DIR}/libev.so"
     COMMAND ${CMAKE_COMMAND} -E make_directory "${DUCKEMU_SO_RUNTIME_DIR}"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${DUCKEMU_SO_BUILD_DIR}/liba.so" "${DUCKEMU_SO_RUNTIME_DIR}/liba.so"
@@ -176,13 +200,19 @@ add_custom_command(
             "${DUCKEMU_SO_BUILD_DIR}/libdlcaller.so" "${DUCKEMU_SO_RUNTIME_DIR}/libdlcaller.so"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${DUCKEMU_SO_BUILD_DIR}/libfd.so" "${DUCKEMU_SO_RUNTIME_DIR}/libfd.so"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${DUCKEMU_SO_BUILD_DIR}/libwr.so" "${DUCKEMU_SO_RUNTIME_DIR}/libwr.so"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${DUCKEMU_SO_BUILD_DIR}/libev.so" "${DUCKEMU_SO_RUNTIME_DIR}/libev.so"
     DEPENDS "${DUCKEMU_SO_BUILD_DIR}/liba.so"
             "${DUCKEMU_SO_BUILD_DIR}/libb.so"
             "${DUCKEMU_SO_BUILD_DIR}/libmissing.so"
             "${DUCKEMU_SO_BUILD_DIR}/libtls.so"
             "${DUCKEMU_SO_BUILD_DIR}/libplug.so"
             "${DUCKEMU_SO_BUILD_DIR}/libdlcaller.so"
-            "${DUCKEMU_SO_BUILD_DIR}/libfd.so")
+            "${DUCKEMU_SO_BUILD_DIR}/libfd.so"
+            "${DUCKEMU_SO_BUILD_DIR}/libwr.so"
+            "${DUCKEMU_SO_BUILD_DIR}/libev.so")
 
 add_custom_target(guest_so ALL
     DEPENDS "${DUCKEMU_SO_RUNTIME_DIR}/liba.so"
@@ -191,7 +221,9 @@ add_custom_target(guest_so ALL
             "${DUCKEMU_SO_RUNTIME_DIR}/libtls.so"
             "${DUCKEMU_SO_RUNTIME_DIR}/libplug.so"
             "${DUCKEMU_SO_RUNTIME_DIR}/libdlcaller.so"
-            "${DUCKEMU_SO_RUNTIME_DIR}/libfd.so")
+            "${DUCKEMU_SO_RUNTIME_DIR}/libfd.so"
+            "${DUCKEMU_SO_RUNTIME_DIR}/libwr.so"
+            "${DUCKEMU_SO_RUNTIME_DIR}/libev.so")
 
 # ---------------------------------------------------------------------------
 # Test support
@@ -238,6 +270,8 @@ duckemu_add_loader_test(04_so_load)
 duckemu_add_loader_test(04b_tlsdesc)
 duckemu_add_loader_test(04d_dlopen)
 duckemu_add_loader_test(04e_dup_fcntl)
+duckemu_add_loader_test(04f_vfs_write)
+duckemu_add_loader_test(04g_event_loop)
 
 # ---------------------------------------------------------------------------
 # M4.5 gate: real bionic from the local Android environment.

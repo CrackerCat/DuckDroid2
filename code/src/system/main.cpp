@@ -28,6 +28,7 @@ void Usage()
 		"                            [,instances=N][,workers=N]\n"
 		"                            [,library-path=P1:P2]\n"
 		"                            [,filesystem-root=P1:P2]\n"
+		"                            [,filesystem-write-root=DIR]\n"
 		"                            [,init-timeout-us=N][,invoke-timeout-us=N]\n"
 		"                            [,backoff-ms=N][,max-requests=N]\n"
 		"                      [--wall-time-ns N] [--monotonic-time-ns N]\n"
@@ -119,6 +120,10 @@ bool ParseApp(const std::string &spec, duckemu::system::WorkerSpec *worker, std:
 					worker->filesystem_roots.push_back(root);
 				}
 			}
+		}
+		else if (key == "filesystem-write-root")
+		{
+			worker->filesystem_write_root = value;
 		}
 		else if (key == "instances")
 		{

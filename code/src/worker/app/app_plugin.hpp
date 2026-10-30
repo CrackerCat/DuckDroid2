@@ -27,6 +27,9 @@ struct AppContext
 	// Host directories the guest sees as "/", read-only. Targets that read
 	// their own APK or bundled data need one root holding that tree.
 	std::vector<std::string> filesystem_roots;
+	// Host directory backing guest writes (per-instance sandbox). Empty keeps
+	// the guest namespace read-only.
+	std::string filesystem_write_root;
 };
 
 // One request as the plugin sees it. Deliberately not protocol::Request: the

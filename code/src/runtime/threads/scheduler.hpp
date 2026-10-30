@@ -94,6 +94,10 @@ class ThreadScheduler final : public ThreadSystem
 	int64_t cloneThread(RuntimeThread &parent, const CloneRequest &request) override;
 	int64_t futexWait(RuntimeThread &thread, GuestVA uaddr, uint32_t expected, uint64_t timeout_address) override;
 	int64_t futexWake(GuestVA uaddr, int32_t count) override;
+	int64_t parkThread(RuntimeThread &thread,
+		std::unique_ptr<PendingSyscall> pending,
+		uint64_t timeout_us) override;
+	bool wakeThread(RuntimeThread &thread, WakeReason reason) override;
 	void exitThread(RuntimeThread &thread, int32_t code) override;
 	void exitGroup(RuntimeThread &thread, int32_t code) override;
 	void setClearChildTid(RuntimeThread &thread, GuestVA address) override;
@@ -112,6 +116,8 @@ class ThreadScheduler final : public ThreadSystem
 	void applyPendingCompletion(RuntimeThread &thread);
 	void handleRunOutcome(RuntimeThread &thread, const Result<RunOutcome> &outcome);
 	void finalizeThread(RuntimeThread &thread);
+	// Runs a timed-out blocking syscall's completion under the execution lock.
+	void expireDeadline(RuntimeThread &thread);
 	void reapExited();
 	void removeFromWaitQueue(RuntimeThread &thread);
 

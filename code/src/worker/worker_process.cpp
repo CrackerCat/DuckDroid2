@@ -351,6 +351,11 @@ bool WorkerProcess::Impl::Spawn(Slot &slot, std::string *error)
 		arguments.push_back("--filesystem-root");
 		arguments.push_back(root);
 	}
+	if (!config.app.filesystem_write_root.empty())
+	{
+		arguments.push_back("--filesystem-write-root");
+		arguments.push_back(config.app.filesystem_write_root);
+	}
 	if (!config.trace_path.empty())
 	{
 		arguments.push_back("--trace");

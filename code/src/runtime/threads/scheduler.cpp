@@ -2,6 +2,7 @@
 #include "runtime/threads/scheduler.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <functional>
 #include <utility>
@@ -48,6 +49,7 @@ class FutexWaitOp final : public PendingSyscall
 		case WakeReason::Signal:
 			return svc::kError(svc::kEintr);
 		case WakeReason::ThreadExited:
+		case WakeReason::PollWoke: // futex waiters are not registered as such
 			return std::nullopt;
 		}
 		return std::nullopt;
@@ -367,12 +369,27 @@ void ThreadScheduler::hostThreadLoop(RuntimeThread &thread)
 		ThreadState state = ThreadState::Created;
 		{
 			std::unique_lock<std::mutex> lock(thread.mutex);
-			thread.cv.wait(lock, [this, &thread] {
+			auto ready = [this, &thread] {
 				return stopping_.load(std::memory_order_acquire) || thread.exit_requested ||
 				       thread.state == ThreadState::Exited ||
 				       (thread.is_main && thread.request.requested) ||
 				       thread.state == ThreadState::Runnable;
-			});
+			};
+			if (thread.state == ThreadState::Blocked && thread.has_deadline)
+			{
+				// Sleep until woken or the syscall's deadline. Expiry only
+				// flags the thread; the completion callback runs once this
+				// thread holds the execution lock again.
+				if (!thread.cv.wait_until(lock, thread.deadline, ready) && !ready())
+				{
+					thread.deadline_expired = true;
+					thread.state = ThreadState::Runnable;
+				}
+			}
+			else
+			{
+				thread.cv.wait(lock, ready);
+			}
 			has_request = thread.is_main && thread.request.requested;
 			exit_requested = thread.exit_requested;
 			state = thread.state;
@@ -403,6 +420,7 @@ void ThreadScheduler::hostThreadLoop(RuntimeThread &thread)
 			continue;
 		}
 
+		expireDeadline(thread);
 		applyPendingCompletion(thread);
 		{
 			std::lock_guard<std::mutex> lock(thread.mutex);
@@ -710,10 +728,29 @@ int64_t ThreadScheduler::futexWait(RuntimeThread &thread,
 	uint32_t expected,
 	uint64_t timeout_address)
 {
-	// Timeouts are not implemented in M3; surface them instead of pretending.
+	// A relative struct timespec: tv_sec at +0, tv_nsec at +8.
+	uint64_t timeout_us = 0;
 	if (timeout_address != 0)
 	{
-		return svc::kError(svc::kEnosys);
+		int64_t seconds = 0;
+		int64_t nanoseconds = 0;
+		if (!memory_.read(GuestVA{ timeout_address }, &seconds, sizeof(seconds)).ok() ||
+		    !memory_.read(GuestVA{ timeout_address + 8 }, &nanoseconds, sizeof(nanoseconds)).ok())
+		{
+			return svc::kError(svc::kEfault);
+		}
+		if (seconds < 0 || nanoseconds < 0 || nanoseconds >= 1000000000LL)
+		{
+			return svc::kError(svc::kEinval);
+		}
+		// Rounded up: a sub-microsecond wait still expires, and 0 means "no
+		// deadline" to the parking code.
+		timeout_us = static_cast<uint64_t>(seconds) * 1000000ULL +
+			     static_cast<uint64_t>((nanoseconds + 999) / 1000);
+		if (timeout_us == 0)
+		{
+			timeout_us = 1;
+		}
 	}
 	auto value = memory_.readU32(uaddr);
 	if (!value.ok())
@@ -737,9 +774,115 @@ int64_t ThreadScheduler::futexWait(RuntimeThread &thread,
 	{
 		std::lock_guard<std::mutex> lock(thread.mutex);
 		thread.state = ThreadState::Blocked;
+		thread.futex_key = uaddr.value();
+		thread.has_deadline = timeout_us != 0;
+		thread.deadline_expired = false;
+		if (timeout_us != 0)
+		{
+			thread.deadline =
+				std::chrono::steady_clock::now() + std::chrono::microseconds(timeout_us);
+		}
 	}
 	publishThreadEvent(observer::ThreadEventKind::Blocked, thread);
 	return 0;
+}
+
+int64_t ThreadScheduler::parkThread(RuntimeThread &thread,
+	std::unique_ptr<PendingSyscall> pending,
+	uint64_t timeout_us)
+{
+	if (thread.pending)
+	{
+		return svc::kError(svc::kEdeadlk);
+	}
+	if (!pending)
+	{
+		return svc::kError(svc::kEinval);
+	}
+	thread.pending = std::move(pending);
+	{
+		std::lock_guard<std::mutex> lock(thread.mutex);
+		thread.state = ThreadState::Blocked;
+		thread.has_deadline = timeout_us != 0;
+		thread.deadline_expired = false;
+		if (timeout_us != 0)
+		{
+			thread.deadline =
+				std::chrono::steady_clock::now() + std::chrono::microseconds(timeout_us);
+		}
+	}
+	publishThreadEvent(observer::ThreadEventKind::Blocked, thread);
+	return 0;
+}
+
+bool ThreadScheduler::wakeThread(RuntimeThread &thread, WakeReason reason)
+{
+	if (!thread.pending)
+	{
+		return false;
+	}
+	auto result = thread.pending->complete(reason);
+	if (!result.has_value())
+	{
+		// Spurious: the condition the waiter tests still does not hold.
+		return false;
+	}
+	{
+		std::lock_guard<std::mutex> lock(thread.mutex);
+		thread.pending_result = result.value();
+		thread.pending_completed = true;
+		thread.has_deadline = false;
+		thread.deadline_expired = false;
+		thread.futex_key = 0;
+		thread.state = ThreadState::Runnable;
+	}
+	publishThreadEvent(observer::ThreadEventKind::Runnable, thread);
+	thread.cv.notify_all();
+	return true;
+}
+
+void ThreadScheduler::expireDeadline(RuntimeThread &thread)
+{
+	uint64_t futex_key = 0;
+	{
+		std::lock_guard<std::mutex> lock(thread.mutex);
+		if (!thread.deadline_expired)
+		{
+			return;
+		}
+		thread.deadline_expired = false;
+		thread.has_deadline = false;
+		if (!thread.pending)
+		{
+			return;
+		}
+		auto result = thread.pending->complete(WakeReason::TimerExpired);
+		if (!result.has_value())
+		{
+			// The syscall wants to keep waiting; re-arm nothing, the caller
+			// will be parked again by its next iteration.
+			thread.state = ThreadState::Blocked;
+			return;
+		}
+		thread.pending_result = result.value();
+		thread.pending_completed = true;
+		futex_key = thread.futex_key;
+		thread.futex_key = 0;
+	}
+	if (futex_key != 0)
+	{
+		std::lock_guard<std::mutex> lock(instance_mutex_);
+		auto it = wait_queue_.find(futex_key);
+		if (it != wait_queue_.end())
+		{
+			auto &waiters = it->second;
+			waiters.erase(std::remove(waiters.begin(), waiters.end(), &thread), waiters.end());
+			if (waiters.empty())
+			{
+				wait_queue_.erase(it);
+			}
+		}
+	}
 }
 
 int64_t ThreadScheduler::futexWake(GuestVA uaddr, int32_t count)
@@ -785,6 +928,8 @@ int64_t ThreadScheduler::futexWake(GuestVA uaddr, int32_t count)
 			std::lock_guard<std::mutex> lock(thread->mutex);
 			thread->pending_result = result.value();
 			thread->pending_completed = true;
+			thread->futex_key = 0;
+			thread->has_deadline = false;
 			thread->state = ThreadState::Runnable;
 		}
 		publishThreadEvent(observer::ThreadEventKind::Runnable, *thread);
