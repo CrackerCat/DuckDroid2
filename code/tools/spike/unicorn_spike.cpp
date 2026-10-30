@@ -6,8 +6,12 @@
 // docs/devlogs/2026-10-27-03-M0探针结果.md.
 //
 // Usage:
-//   unicorn_spike all     # run all nine probes in order
-//   unicorn_spike 1..9    # run a single probe
+//   unicorn_spike all     # run all probes in order
+//   unicorn_spike 1..11   # run a single probe
+//
+// Probes 1-9 are the M0 set. Probes 10-11 are the M8 instruction-trace and
+// address-hook pre-work: they pin PC redirect from a code hook, callback
+// ordering, and SVC replay across a stop/resume.
 //
 // Exit code is the number of failed expectations (0 = all probes matched the
 // design assumptions).
@@ -1248,6 +1252,349 @@ bool probe9() {
 }
 
 // ---------------------------------------------------------------------------
+// Probe 10/11: M8 pre-work -- code-hook PC redirect and hook ordering.
+//
+// Probe 10 answers the one question the trace/hook design cannot guess:
+// can a UC_HOOK_CODE callback redirect execution by writing PC? Probe 11 pins
+// the order of code/memory/intr callbacks and whether an SVC is replayed when
+// the intr handler stops and the host resumes from svc + 4.
+// ---------------------------------------------------------------------------
+enum class TraceEventKind { Code = 0, MemRead, MemWrite, Intr };
+
+struct TraceEvent {
+    TraceEventKind kind;
+    uint64_t address;
+    uint32_t size;
+    uint64_t pc = 0;
+};
+
+struct HookTraceCtx {
+    std::vector<TraceEvent> events;
+    uint64_t hook_address = 0;
+    uint64_t redirect_to = 0;
+    int redirects = 0;
+    int intr_hits = 0;
+    bool stop_on_intr = false;
+};
+
+const char* trace_event_name(TraceEventKind kind) {
+    switch (kind) {
+    case TraceEventKind::Code: return "code";
+    case TraceEventKind::MemRead: return "read";
+    case TraceEventKind::MemWrite: return "write";
+    case TraceEventKind::Intr: return "intr";
+    }
+    return "?";
+}
+
+void on_trace_code(uc_engine* uc, uint64_t address, uint32_t size, void* user_data) {
+    auto* ctx = static_cast<HookTraceCtx*>(user_data);
+    ctx->events.push_back({TraceEventKind::Code, address, size, address});
+    if (ctx->redirect_to != 0 && address == ctx->hook_address) {
+        ++ctx->redirects;
+        uint64_t target = ctx->redirect_to;
+        uc_reg_write(uc, UC_ARM64_REG_PC, &target);
+    }
+}
+
+bool on_trace_mem(uc_engine* uc, uc_mem_type type, uint64_t address, int size,
+                  int64_t /*value*/, void* user_data) {
+    auto* ctx = static_cast<HookTraceCtx*>(user_data);
+    const uint64_t pc = read_reg(uc, UC_ARM64_REG_PC);
+    if (type == UC_MEM_READ) {
+        ctx->events.push_back({TraceEventKind::MemRead, address,
+                               static_cast<uint32_t>(size), pc});
+    } else if (type == UC_MEM_WRITE) {
+        ctx->events.push_back({TraceEventKind::MemWrite, address,
+                               static_cast<uint32_t>(size), pc});
+    }
+    return true;
+}
+
+void on_trace_intr(uc_engine* uc, uint32_t intno, void* user_data) {
+    auto* ctx = static_cast<HookTraceCtx*>(user_data);
+    ++ctx->intr_hits;
+    const uint64_t pc = read_reg(uc, UC_ARM64_REG_PC);
+    ctx->events.push_back({TraceEventKind::Intr, pc, intno, pc});
+    if (ctx->stop_on_intr) {
+        uc_emu_stop(uc);
+    }
+}
+
+bool add_trace_hooks(uc_engine* uc, HookTraceCtx* ctx, uint64_t code_begin,
+                     uint64_t code_end) {
+    uc_hook hook = 0;
+    uc_err err = uc_hook_add(uc, &hook, UC_HOOK_CODE,
+                             reinterpret_cast<void*>(&on_trace_code), ctx,
+                             code_begin, code_end);
+    if (err != UC_ERR_OK) {
+        std::printf("  uc_hook_add(UC_HOOK_CODE) failed: %s\n", uc_strerror(err));
+        ++g_failures;
+        return false;
+    }
+    hook = 0;
+    err = uc_hook_add(uc, &hook, UC_HOOK_MEM_READ | UC_HOOK_MEM_WRITE,
+                      reinterpret_cast<void*>(&on_trace_mem), ctx, 1, 0);
+    if (err != UC_ERR_OK) {
+        std::printf("  uc_hook_add(UC_HOOK_MEM_READ|WRITE) failed: %s\n",
+                    uc_strerror(err));
+        ++g_failures;
+        return false;
+    }
+    hook = 0;
+    err = uc_hook_add(uc, &hook, UC_HOOK_INTR,
+                      reinterpret_cast<void*>(&on_trace_intr), ctx, 1, 0);
+    if (err != UC_ERR_OK) {
+        std::printf("  uc_hook_add(UC_HOOK_INTR) failed: %s\n", uc_strerror(err));
+        ++g_failures;
+        return false;
+    }
+    return true;
+}
+
+void print_trace_events(const HookTraceCtx& ctx) {
+    std::printf("  event sequence (%zu):\n", ctx.events.size());
+    for (size_t i = 0; i < ctx.events.size(); ++i) {
+        std::printf("    %2zu  %-5s addr=0x%05" PRIx64 "  size=%u  pc=0x%05" PRIx64 "\n", i,
+                    trace_event_name(ctx.events[i].kind), ctx.events[i].address,
+                    ctx.events[i].size, ctx.events[i].pc);
+    }
+}
+
+int count_events(const HookTraceCtx& ctx, TraceEventKind kind, uint64_t address) {
+    int count = 0;
+    for (const auto& event : ctx.events) {
+        if (event.kind == kind && event.address == address) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+int index_of_event(const HookTraceCtx& ctx, TraceEventKind kind, uint64_t address) {
+    for (size_t i = 0; i < ctx.events.size(); ++i) {
+        if (ctx.events[i].kind == kind && ctx.events[i].address == address) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+// Case A: redirect to an address inside the straight-line block.
+bool probe10_redirect_same_block() {
+    uc_engine* uc = open_engine("p10a");
+    if (uc == nullptr || !map_basic(uc)) {
+        return false;
+    }
+
+    Assembler a(kCode);
+    a.mov(0, 0x10);
+    const uint64_t hook_pc = a.pc();
+    a.mov(1, 0x11); // must be skipped
+    a.mov(2, 0x12); // must be skipped
+    const uint64_t landing = a.pc();
+    a.mov(3, 0x13); // must run
+    const size_t b_done = a.b_placeholder();
+    const size_t done_label = a.label();
+    a.nop();
+    a.b(a.addr_of(done_label));
+    a.patch_branch(b_done, a.addr_of(done_label));
+
+    load_code(uc, a);
+
+    HookTraceCtx ctx;
+    ctx.hook_address = hook_pc;
+    ctx.redirect_to = landing;
+    if (!add_trace_hooks(uc, &ctx, hook_pc, hook_pc + 4)) {
+        return false;
+    }
+
+    const uc_err err = uc_emu_start(uc, kCode, a.addr_of(done_label),
+                                    kProbeTimeoutUs, 0);
+    const uint64_t x1 = read_reg(uc, UC_ARM64_REG_X1);
+    const uint64_t x2 = read_reg(uc, UC_ARM64_REG_X2);
+    const uint64_t x3 = read_reg(uc, UC_ARM64_REG_X3);
+
+    std::printf("  -- same-block redirect --\n");
+    show_err("uc_emu_start", err);
+    show_u64("hook address", hook_pc);
+    show_u64("redirect target", landing);
+    show_u64("redirects", static_cast<uint64_t>(ctx.redirects));
+    show_u64("x1 (must stay 0)", x1);
+    show_u64("x2 (must stay 0)", x2);
+    show_u64("x3 (must be 0x13)", x3);
+    print_trace_events(ctx);
+
+    const bool ok = x1 == 0 && x2 == 0 && x3 == 0x13;
+    expect(ok, "code hook PC write redirects execution (same block)");
+    uc_close(uc);
+    return true;
+}
+
+// Case B: redirect to a different executable page.
+bool probe10_redirect_other_page() {
+    uc_engine* uc = open_engine("p10b");
+    if (uc == nullptr || !map_basic(uc)) {
+        return false;
+    }
+    if (!map_region(uc, kExtra, kPage, UC_PROT_ALL, "extra")) {
+        return false;
+    }
+
+    Assembler main(kCode);
+    main.mov(0, 0x10);
+    const uint64_t hook_pc = main.pc();
+    main.mov(1, 0x11); // must be skipped
+    const size_t b_done = main.b_placeholder();
+    const size_t done_label = main.label();
+    main.nop();
+    main.b(main.addr_of(done_label));
+    main.patch_branch(b_done, main.addr_of(done_label));
+    const uint64_t done = main.addr_of(done_label);
+    load_code(uc, main);
+
+    Assembler extra(kExtra);
+    extra.mov(4, 0x44);
+    extra.b(done);
+    const uc_err write_err =
+        uc_mem_write(uc, kExtra, extra.words().data(),
+                     extra.size() * sizeof(uint32_t));
+    if (write_err != UC_ERR_OK) {
+        std::printf("  write extra page failed: %s\n", uc_strerror(write_err));
+        ++g_failures;
+        return false;
+    }
+
+    HookTraceCtx ctx;
+    ctx.hook_address = hook_pc;
+    ctx.redirect_to = kExtra;
+    if (!add_trace_hooks(uc, &ctx, hook_pc, hook_pc + 4)) {
+        return false;
+    }
+
+    const uc_err err = uc_emu_start(uc, kCode, done, kProbeTimeoutUs, 0);
+    const uint64_t x1 = read_reg(uc, UC_ARM64_REG_X1);
+    const uint64_t x4 = read_reg(uc, UC_ARM64_REG_X4);
+    const uint64_t pc = read_reg(uc, UC_ARM64_REG_PC);
+
+    std::printf("  -- cross-page redirect --\n");
+    show_err("uc_emu_start", err);
+    show_u64("x1 (must stay 0)", x1);
+    show_u64("x4 (must be 0x44)", x4);
+    show_u64("PC after run", pc);
+    print_trace_events(ctx);
+
+    const bool ok = x1 == 0 && x4 == 0x44;
+    expect(ok, "code hook PC write redirects execution (other page)");
+    uc_close(uc);
+    return true;
+}
+
+bool probe10() {
+    std::printf("\n== Probe 10: UC_HOOK_CODE writes PC (redirect) ==\n");
+    probe10_redirect_same_block();
+    probe10_redirect_other_page();
+    return true;
+}
+
+bool probe11() {
+    std::printf("\n== Probe 11: code/mem/intr order; SVC replay on resume ==\n");
+    uc_engine* uc = open_engine("p11");
+    if (uc == nullptr || !map_basic(uc)) {
+        return false;
+    }
+
+    uint64_t initial = 0x1122334455667788ULL;
+    uc_mem_write(uc, kData, &initial, sizeof(initial));
+
+    Assembler a(kCode);
+    a.mov(0, kData);
+    a.mov(8, 39); // getpid
+    const uint64_t ldr_pc = a.pc();
+    a.ldr_x(1, 0, 0);
+    const uint64_t str_pc = a.pc();
+    a.str_x(2, 0, 8);
+    const uint64_t svc_pc = a.pc();
+    a.svc(0);
+    const size_t b_done = a.b_placeholder();
+    const size_t done_label = a.label();
+    a.nop();
+    a.b(a.addr_of(done_label));
+    a.patch_branch(b_done, a.addr_of(done_label));
+    const uint64_t done = a.addr_of(done_label);
+    load_code(uc, a);
+
+    HookTraceCtx ctx;
+    if (!add_trace_hooks(uc, &ctx, kCode, done)) {
+        return false;
+    }
+
+    const uc_err err = uc_emu_start(uc, kCode, done, kProbeTimeoutUs, 0);
+    const uint64_t x1 = read_reg(uc, UC_ARM64_REG_X1);
+
+    std::printf("  -- normal run --\n");
+    show_err("uc_emu_start", err);
+    show_u64("x1 (loaded value)", x1);
+    print_trace_events(ctx);
+
+    const int ldr_index = index_of_event(ctx, TraceEventKind::Code, ldr_pc);
+    const int read_index = index_of_event(ctx, TraceEventKind::MemRead, kData);
+    const int str_index = index_of_event(ctx, TraceEventKind::Code, str_pc);
+    const int write_index = index_of_event(ctx, TraceEventKind::MemWrite, kData + 8);
+    const int svc_code_hits = count_events(ctx, TraceEventKind::Code, svc_pc);
+    const int intr_hits = count_events(ctx, TraceEventKind::Intr, svc_pc + 4);
+
+    expect_u64("x1 == loaded memory", x1, 0x1122334455667788ULL);
+    expect(ldr_index >= 0 && read_index >= 0 && ldr_index < read_index,
+           "code hook runs before the instruction's memory read");
+    expect(str_index >= 0 && write_index >= 0 && str_index < write_index,
+           "code hook runs before the instruction's memory write");
+    expect_u64("intr hook hit once", static_cast<uint64_t>(intr_hits), 1);
+    show_u64("code hook hits at the SVC address", static_cast<uint64_t>(svc_code_hits));
+
+    // Stop inside the intr handler, then resume from svc + 4. The SVC must not
+    // be replayed: a replayed SVC would show up as a second code hook hit at
+    // svc_pc or a second intr hit.
+    HookTraceCtx resumed;
+    resumed.stop_on_intr = true;
+    uc_engine* uc2 = open_engine("p11-resume");
+    if (uc2 == nullptr || !map_basic(uc2)) {
+        return false;
+    }
+    uc_mem_write(uc2, kData, &initial, sizeof(initial));
+    load_code(uc2, a);
+    if (!add_trace_hooks(uc2, &resumed, kCode, done)) {
+        return false;
+    }
+
+    const uc_err first_err = uc_emu_start(uc2, kCode, done, kProbeTimeoutUs, 0);
+    const uint64_t pc_after_stop = read_reg(uc2, UC_ARM64_REG_PC);
+    const uc_err resume_err =
+        uc_emu_start(uc2, pc_after_stop, done, kProbeTimeoutUs, 0);
+
+    std::printf("  -- stop in intr + resume --\n");
+    show_err("first uc_emu_start", first_err);
+    show_u64("PC after stop", pc_after_stop);
+    show_u64("svc + 4", svc_pc + 4);
+    show_err("resume uc_emu_start", resume_err);
+    print_trace_events(resumed);
+
+    expect_u64("stop lands on svc + 4", pc_after_stop, svc_pc + 4);
+    expect_u64("intr fired once across stop/resume",
+               static_cast<uint64_t>(count_events(resumed, TraceEventKind::Intr,
+                                                  svc_pc + 4)),
+               1);
+    expect_u64("SVC code hook not replayed on resume",
+               static_cast<uint64_t>(count_events(resumed, TraceEventKind::Code,
+                                                  svc_pc)),
+               static_cast<uint64_t>(svc_code_hits));
+
+    uc_close(uc2);
+    uc_close(uc);
+    return true;
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 struct Probe {
@@ -1266,6 +1613,8 @@ const Probe kProbes[] = {
     {7, "two engines + map_ptr", &probe7},
     {8, "map_ptr + per-engine permissions", &probe8},
     {9, "cross-thread stop + paused engine", &probe9},
+    {10, "code hook writes PC (redirect)", &probe10},
+    {11, "code/mem/intr order + SVC replay", &probe11},
 };
 
 } // namespace
