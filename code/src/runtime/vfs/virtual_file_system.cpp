@@ -307,11 +307,59 @@ uint32_t VirtualFileSystem::syntheticMode(const SyntheticNode &node)
 	return node.directory ? (S_IFDIR | 0555) : (S_IFREG | 0444);
 }
 
+namespace
+{
+
+// A device snapshot stores process-relative proc files under self/; the guest
+// may ask for /proc/<its own pid>/x or /proc/thread-self/x instead.
+std::string hostLookupPath(std::string_view guest_path, uint32_t pid)
+{
+	if (guest_path.compare(0, 6, "/proc/") != 0)
+	{
+		return std::string(guest_path);
+	}
+	const std::string_view rest = guest_path.substr(6);
+	const size_t slash = rest.find('/');
+	if (slash == std::string_view::npos)
+	{
+		return std::string(guest_path);
+	}
+	const std::string_view component = rest.substr(0, slash);
+	if (component != std::to_string(pid) && component != "thread-self")
+	{
+		return std::string(guest_path);
+	}
+	std::string mapped = "/proc/self";
+	mapped.append(rest.substr(slash));
+	return mapped;
+}
+
+} // namespace
+
 Result<std::unique_ptr<File> > VirtualFileSystem::openPath(const std::string &guest_path,
 	uint64_t flags) const
 {
 	if (isProcPath(guest_path))
 	{
+		// A device snapshot in a host root wins, including for proc files the
+		// emulator also synthesizes (maps/status). Synthesis is the fallback
+		// for whatever the snapshot does not carry.
+		const std::string lookup = hostLookupPath(guest_path, config_.pid);
+		auto host = resolveHost(lookup);
+		if (host.ok() && !host.value().directory)
+		{
+			if ((flags & kODirectory) != 0)
+			{
+				return Error{ ErrorCode::NotDirectory, guest_path + " is not a directory" };
+			}
+			auto opened = HostFile::open(guest_path, host.value().path);
+			if (!opened.ok())
+			{
+				return opened.error();
+			}
+			return std::unique_ptr<File>(std::move(opened.value()));
+		}
+
 		auto generator = makeGenerator(guest_path, procContext());
 		if (!generator.has_value())
 		{
@@ -751,6 +799,22 @@ Result<FileStat> VirtualFileSystem::stat(uint64_t dirfd, std::string_view path)
 
 	if (isProcPath(guest_path))
 	{
+		// Same precedence as openPath: the device snapshot answers when it has
+		// the file, the synthesizer otherwise.
+		const std::string lookup = hostLookupPath(guest_path, config_.pid);
+		auto host = resolveHost(lookup);
+		if (host.ok())
+		{
+			struct stat info = {};
+			if (::stat(host.value().path.c_str(), &info) != 0)
+			{
+				return Error{ ErrorCode::NotFound, "cannot stat " + guest_path };
+			}
+			FileStat result = toFileStat(info);
+			applyOwner(result);
+			return result;
+		}
+
 		auto generator = makeGenerator(guest_path, procContext());
 		if (!generator.has_value())
 		{
@@ -930,7 +994,17 @@ Result<void> VirtualFileSystem::access(uint64_t dirfd, std::string_view path, ui
 
 	if (isProcPath(guest_path))
 	{
-		if (!makeGenerator(guest_path, procContext()).has_value())
+		const std::string lookup = hostLookupPath(guest_path, config_.pid);
+		auto host = resolveHost(lookup);
+		if (host.ok())
+		{
+			if ((mode & kAccessRead) != 0 &&
+				::access(host.value().path.c_str(), R_OK) != 0)
+			{
+				return Error{ ErrorCode::PermissionDenied, "cannot read " + guest_path };
+			}
+		}
+		else if (!makeGenerator(guest_path, procContext()).has_value())
 		{
 			return Error{ ErrorCode::NotFound, "no such proc file: " + guest_path };
 		}

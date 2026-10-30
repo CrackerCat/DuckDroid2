@@ -290,3 +290,26 @@ jdgs_case/
 cmake --build build --target duckemu_jdgs_case
 ./build/user_code/duckemu_jdgs_case
 ```
+
+`szstone_case/` 是带设备快照与系统属性画像的真实目标：
+
+```text
+szstone_case/
+├── szstone_env.hpp/.cpp   # SzSdk 的 10 个 native 与 lf 的 Android 对象图
+├── szstone_codec.hpp      # runner/plugin 共用的 hex、z 参数解析
+├── szstone.properties     # 抓取设备的系统属性（只放 lf 读到的键）
+├── main.cpp               # 加载 libc/libszstone → 调 lf
+├── plugin.hpp/.cpp        # worker 适配，app id szstone
+└── assets/
+    ├── libszstone.so
+    ├── lf_in.bin / lf_out.bin
+    └── root/              # /proc、build.prop 等设备快照
+```
+
+```bash
+cmake --build build --target duckemu_szstone_case
+./build/user_code/duckemu_szstone_case
+# 注入时钟 + 随机种子后逐字节可复现
+./build/user_code/duckemu_szstone_case --random-seed 7 \
+  --wall-time-ns 1792886400000000000 --monotonic-time-ns 1000000000
+```

@@ -30,3 +30,15 @@
   # 与 DuckDroid 参考 runner 逐字节一致的回放
   JDGS_WALL_TIME_MS=1792886400000 JDGS_REPEAT=2 ./build/user_code/duckemu_jdgs_case
   ```
+
+- [`szstone_case/`](szstone_case/)：得物 6.1.5.10 `libszstone.so` 的
+  `SzSdk.lf([BZZZ)[B` 调用；设备快照（`/proc`、build.prop）作为 guest 根，
+  app id `szstone`。
+
+  ```bash
+  cmake --build build --target duckemu_szstone_case
+  ./build/user_code/duckemu_szstone_case
+  # 注入时钟 + 随机种子后输出逐字节可复现
+  ./build/user_code/duckemu_szstone_case --random-seed 7 \
+    --wall-time-ns 1792886400000000000
+  ```

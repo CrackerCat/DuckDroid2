@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "runtime/backend/unicorn/unicorn_engine.hpp"
 
+#include <cstdio>
 #include <utility>
 
 #include "common/log/logger.hpp"
@@ -129,11 +130,32 @@ bool UnicornEngine::onUnmappedAccess(uc_engine *uc,
 	const char *kind = type == UC_MEM_WRITE_UNMAPPED ? "write" :
 				  type == UC_MEM_READ_UNMAPPED  ? "read" :
 								  "fetch";
-	DUCKEMU_ERROR("guest %s unmapped: address=0x%llx size=%d pc=0x%llx",
+	char registers[416];
+	size_t used = 0;
+	for (int index = 0; index <= 28 && used < sizeof(registers); ++index)
+	{
+		uint64_t register_value = 0;
+		if (uc_reg_read(uc, static_cast<uc_arm64_reg>(UC_ARM64_REG_X0 + index),
+			    &register_value) != UC_ERR_OK)
+		{
+			break;
+		}
+		const int written = std::snprintf(registers + used, sizeof(registers) - used,
+			"%s x%d=0x%llx", index == 0 ? "" : ",", index,
+			static_cast<unsigned long long>(register_value));
+		if (written <= 0)
+		{
+			break;
+		}
+		used += static_cast<size_t>(written);
+	}
+	DUCKEMU_ERROR("guest %s unmapped: address=0x%llx size=%d pc=0x%llx%s%s",
 		kind,
 		static_cast<unsigned long long>(address),
 		size,
-		static_cast<unsigned long long>(pc));
+		static_cast<unsigned long long>(pc),
+		used != 0 ? "\n  " : "",
+		registers);
 	return false;
 }
 

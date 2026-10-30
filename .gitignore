@@ -11,8 +11,9 @@ compile_commands.json
 *.o
 *.a
 *.so
-# 例外：目标项目自带的 so 是输入，不是构建产物
+# 例外：目标项目自带的 so 是输入，不是构建产物（含设备快照里的 system/lib64）
 !code/user_code/*/assets/*.so
+!code/user_code/*/assets/**/*.so
 code/tests/guest_so/out/
 
 # 编辑器

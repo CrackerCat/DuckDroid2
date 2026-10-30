@@ -2,6 +2,8 @@
 #include "runtime/loader/module_loader.hpp"
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <memory>
 #include <utility>
@@ -180,6 +182,16 @@ Result<Module *> ModuleLoader::loadImage(const std::string &path, ElfImage parse
 	}
 
 	Module &registered = registry_.add(std::make_unique<Module>(std::move(module)));
+
+	// DUCKEMU_LOAD_TRACE=1: address-space layout, one line per module.
+	if (std::getenv("DUCKEMU_LOAD_TRACE") != nullptr)
+	{
+		std::fprintf(stderr, "module %s base=0x%llx span=0x%llx path=%s\n",
+			registered.soname.c_str(),
+			static_cast<unsigned long long>(registered.base),
+			static_cast<unsigned long long>(registered.span),
+			registered.path.c_str());
+	}
 
 	if (events_ != nullptr)
 	{

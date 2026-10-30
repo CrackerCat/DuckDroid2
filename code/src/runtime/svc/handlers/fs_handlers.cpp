@@ -2,6 +2,8 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <optional>
 #include <string>
@@ -74,6 +76,44 @@ constexpr uint64_t kOWrOnly = 1;
 // read lock.
 constexpr size_t kFlockSize = 32;
 constexpr uint8_t kFUnlck = 2;
+
+// DUCKEMU_IO_TRACE=1: one line per openat/read/pread64/write/close/lseek with
+// the guest path, so a target's real file inputs are visible without a device.
+bool ioTraceEnabled()
+{
+	static const bool enabled = std::getenv("DUCKEMU_IO_TRACE") != nullptr;
+	return enabled;
+}
+
+const char *filePathOrDash(vfs::VirtualFileSystem &vfs, uint64_t fd)
+{
+	vfs::File *file = vfs.find(fd);
+	return file != nullptr ? file->path().data() : "-";
+}
+
+void traceIo(const char *operation,
+	uint64_t fd,
+	const char *path,
+	uint64_t requested,
+	int64_t result)
+{
+	if (!ioTraceEnabled()) {
+		return;
+	}
+	std::fprintf(stderr, "io %s fd=%llu path=%s req=%llu -> %lld\n", operation,
+		static_cast<unsigned long long>(fd), path,
+		static_cast<unsigned long long>(requested),
+		static_cast<long long>(result));
+}
+
+void traceOpen(const char *path, uint64_t flags, int64_t result)
+{
+	if (!ioTraceEnabled()) {
+		return;
+	}
+	std::fprintf(stderr, "io openat path=%s flags=0x%llx -> %lld\n", path,
+		static_cast<unsigned long long>(flags), static_cast<long long>(result));
+}
 
 int64_t toErrno(const Error &error)
 {
@@ -267,9 +307,12 @@ int64_t sysWrite(SyscallContext &ctx)
 		return kError(kEbadf);
 	}
 	auto written = file->write(buffer.data(), count);
+	const int64_t write_result =
+		written.ok() ? static_cast<int64_t>(written.value()) : toErrno(written.error());
+	traceIo("write", fd, file->path().data(), count, write_result);
 	if (!written.ok())
 	{
-		return toErrno(written.error());
+		return write_result;
 	}
 	// A blocking poll/epoll may be waiting on this description.
 	ctx.vfs.notifyActivity();
@@ -309,8 +352,11 @@ int64_t sysRead(SyscallContext &ctx)
 	}
 	std::vector<uint8_t> buffer(static_cast<size_t>(count));
 	auto read = file->read(buffer.data(), count);
+	const int64_t read_result =
+		read.ok() ? static_cast<int64_t>(read.value()) : toErrno(read.error());
+	traceIo("read", fd, file->path().data(), count, read_result);
 	if (!read.ok()) {
-		return toErrno(read.error());
+		return read_result;
 	}
 	auto copied = ctx.memory.write(GuestVA{ buffer_address }, buffer.data(), read.value());
 	if (!copied.ok()) {
@@ -340,8 +386,11 @@ int64_t sysPread64(SyscallContext &ctx)
 	}
 	std::vector<uint8_t> buffer(static_cast<size_t>(count));
 	auto read = file->readAt(offset, buffer.data(), count);
+	const int64_t read_result =
+		read.ok() ? static_cast<int64_t>(read.value()) : toErrno(read.error());
+	traceIo("pread", fd, file->path().data(), count, read_result);
 	if (!read.ok()) {
-		return toErrno(read.error());
+		return read_result;
 	}
 	auto copied = ctx.memory.write(GuestVA{ buffer_address }, buffer.data(), read.value());
 	if (!copied.ok()) {
@@ -357,7 +406,10 @@ int64_t sysClose(SyscallContext &ctx)
 	if (fd <= 2) {
 		return 0;
 	}
+	// close() destroys the description, so keep the path alive for the trace.
+	const std::string path = filePathOrDash(ctx.vfs, fd);
 	auto closed = ctx.vfs.close(fd);
+	traceIo("close", fd, path.c_str(), 0, closed.ok() ? 0 : kError(kEbadf));
 	return closed.ok() ? 0 : kError(kEbadf);
 }
 
@@ -372,7 +424,10 @@ int64_t sysLseek(SyscallContext &ctx)
 		return kError(kEbadf);
 	}
 	auto result = file->seek(static_cast<int64_t>(ctx.args[1]), static_cast<int>(ctx.args[2]));
-	return result.ok() ? static_cast<int64_t>(result.value()) : toErrno(result.error());
+	const int64_t seek_result =
+		result.ok() ? static_cast<int64_t>(result.value()) : toErrno(result.error());
+	traceIo("lseek", fd, file->path().data(), ctx.args[1], seek_result);
+	return seek_result;
 }
 
 int64_t sysOpenat(SyscallContext &ctx)
@@ -383,10 +438,10 @@ int64_t sysOpenat(SyscallContext &ctx)
 		return path_error;
 	}
 	auto opened = ctx.vfs.open(ctx.args[0], path, ctx.args[2], ctx.args[3]);
-	if (!opened.ok()) {
-		return toErrno(opened.error());
-	}
-	return static_cast<int64_t>(opened.value());
+	const int64_t result =
+		opened.ok() ? static_cast<int64_t>(opened.value()) : toErrno(opened.error());
+	traceOpen(path.c_str(), ctx.args[2], result);
+	return result;
 }
 
 int64_t sysUnlinkat(SyscallContext &ctx)

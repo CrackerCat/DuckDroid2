@@ -168,10 +168,10 @@ DevFileSystem::DevFileSystem(RandomSource &random)
 		SyntheticNode node;
 		node.mode = kDeviceMode;
 		node.rdev = rdev;
-		RandomSource *random = random_;
-		node.create = [kind, rdev, random](std::string open_path, uint64_t flags) {
+		RandomSource *source = random_;
+		node.create = [kind, rdev, source](std::string open_path, uint64_t flags) {
 			return std::unique_ptr<File>(
-				new DeviceFile(std::move(open_path), flags, kind, rdev, *random));
+				new DeviceFile(std::move(open_path), flags, kind, rdev, *source));
 		};
 		nodes_.emplace(std::move(path), std::move(node));
 	};

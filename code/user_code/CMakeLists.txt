@@ -29,17 +29,29 @@ target_include_directories(duckemu_user_jdgs PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}
 target_link_libraries(duckemu_user_jdgs PRIVATE duckemu_runtime)
 duckemu_set_warnings(duckemu_user_jdgs)
 
+# 得物 6.1.5.10: libszstone.so SzSdk.lf. The UPX-packed .so, the captured
+# profile blob and the device snapshot live in this project's assets/.
+set(DUCKEMU_SZSTONE_CASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/szstone_case")
+add_library(duckemu_user_szstone STATIC
+  szstone_case/szstone_env.cpp
+)
+target_include_directories(duckemu_user_szstone PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(duckemu_user_szstone PRIVATE duckemu_runtime)
+duckemu_set_warnings(duckemu_user_szstone)
+
 # M7: every project also implements the worker's AppPlugin seam. The registry
 # is the only place app ids are named on this side of the boundary.
 add_library(duckemu_user_registry STATIC
   registry.cpp
   libeleven_case/plugin.cpp
   jdgs_case/plugin.cpp
+  szstone_case/plugin.cpp
 )
 target_include_directories(duckemu_user_registry PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(duckemu_user_registry PUBLIC
   duckemu_user_libeleven
   duckemu_user_jdgs
+  duckemu_user_szstone
   duckemu_common
 )
 duckemu_set_warnings(duckemu_user_registry)
@@ -74,3 +86,22 @@ target_compile_definitions(duckemu_jdgs_case PRIVATE
   DUCKEMU_JDGS_ROOT="${DUCKEMU_JDGS_CASE_DIR}/assets/root"
   DUCKEMU_JDGS_PROPERTIES="${DUCKEMU_JDGS_CASE_DIR}/jdgs.properties")
 duckemu_set_warnings(duckemu_jdgs_case)
+
+# 得物 6.1.5.10 runner: ROM libc/libz + the project's libszstone.so, the
+# hook-captured profile blob and its output, and the device snapshot mounted
+# as the guest file system root.
+add_executable(duckemu_szstone_case
+  szstone_case/main.cpp
+)
+target_link_libraries(duckemu_szstone_case PRIVATE
+  duckemu_runtime
+  duckemu_user_szstone)
+target_compile_definitions(duckemu_szstone_case PRIVATE
+  DUCKEMU_ROM_BOOTSTRAP="${DUCKEMU_ROM_BOOTSTRAP}"
+  DUCKEMU_ROM_LIB64="${DUCKEMU_ROM_LIB64}"
+  DUCKEMU_SZSTONE_SO="${DUCKEMU_SZSTONE_CASE_DIR}/assets/libszstone.so"
+  DUCKEMU_SZSTONE_BLOB="${DUCKEMU_SZSTONE_CASE_DIR}/assets/lf_in.bin"
+  DUCKEMU_SZSTONE_EXPECT="${DUCKEMU_SZSTONE_CASE_DIR}/assets/lf_out.bin"
+  DUCKEMU_SZSTONE_ROOT="${DUCKEMU_SZSTONE_CASE_DIR}/assets/root"
+  DUCKEMU_SZSTONE_PROPERTIES="${DUCKEMU_SZSTONE_CASE_DIR}/szstone.properties")
+duckemu_set_warnings(duckemu_szstone_case)

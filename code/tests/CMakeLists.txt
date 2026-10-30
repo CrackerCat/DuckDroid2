@@ -402,6 +402,23 @@ add_test(NAME 07e_jdgs_plugin COMMAND 07e_jdgs_plugin)
 set_tests_properties(07e_jdgs_plugin PROPERTIES TIMEOUT 180)
 duckemu_set_warnings(07e_jdgs_plugin)
 
+# The dewu target through the same seam: device snapshot as the guest root,
+# the MI 8 property picture, and a pinned clock/random source for byte-level
+# replay. Two fresh instances must produce the same body.
+add_executable(07f_szstone_plugin integration/07f_szstone_plugin.cpp)
+target_link_libraries(07f_szstone_plugin PRIVATE
+  duckemu_runtime duckemu_test_support duckemu_user_registry)
+target_compile_definitions(07f_szstone_plugin PRIVATE
+  DUCKEMU_ROM_BOOTSTRAP="${DUCKEMU_ROM_BOOTSTRAP}"
+  DUCKEMU_ROM_LIB64="${DUCKEMU_ROM_LIB64}"
+  DUCKEMU_SZSTONE_SO="${CMAKE_CURRENT_SOURCE_DIR}/../user_code/szstone_case/assets/libszstone.so"
+  DUCKEMU_SZSTONE_BLOB="${CMAKE_CURRENT_SOURCE_DIR}/../user_code/szstone_case/assets/lf_in.bin"
+  DUCKEMU_SZSTONE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/../user_code/szstone_case/assets/root"
+  DUCKEMU_SZSTONE_PROPERTIES="${CMAKE_CURRENT_SOURCE_DIR}/../user_code/szstone_case/szstone.properties")
+add_test(NAME 07f_szstone_plugin COMMAND 07f_szstone_plugin)
+set_tests_properties(07f_szstone_plugin PROPERTIES TIMEOUT 240)
+duckemu_set_warnings(07f_szstone_plugin)
+
 add_executable(jni_world_test unit/runtime/jni_world_test.cpp)
 target_link_libraries(jni_world_test PRIVATE duckemu_runtime duckemu_test_support)
 add_test(NAME jni_world_test COMMAND jni_world_test)

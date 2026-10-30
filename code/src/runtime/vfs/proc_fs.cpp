@@ -252,6 +252,14 @@ std::optional<std::function<std::string()> > makeGenerator(std::string_view path
 			return buildMaps(context);
 		};
 	}
+	if (name == "mem")
+	{
+		// The process can open its own mem on device. The emulator has no
+		// ptrace-style byte-wise view, so the file is readable and empty.
+		return [] {
+			return std::string();
+		};
+	}
 	if (name == "status")
 	{
 		return [context] {

@@ -74,6 +74,11 @@ struct RuntimeInstance::Impl : loader::DlService
 	uint64_t stack_top = 0;
 	GuestVA return_trap;
 	GuestVA ifunc_arg; // guest __ifunc_arg_t, allocated on first IFUNC resolution
+	// libdl's __cfi_slowpath indexes a process-wide shadow table through
+	// shadow_base_storage. The real linker allocates it and calls __cfi_init;
+	// without that the table base stays 0 and every checked indirect call
+	// dereferences 0x0 + (address >> 17).
+	bool cfi_shadow_ready = false;
 	State state = State::Created;
 
 	Result<void> ensureIfuncArg()
@@ -569,6 +574,43 @@ Result<uint64_t> RuntimeInstance::loadLibrary(std::string_view path)
 		if (!written.ok())
 		{
 			return written.error();
+		}
+	}
+
+	// CFI shadow, the part of the linker __cfi_slowpath depends on.
+	//
+	// bionic's libdl exports __cfi_init(shadow_base): it stores the base that
+	// __cfi_slowpath indexes with (target >> 17). Android's linker allocates the
+	// table and calls it; the virtual linker must do the same or the first
+	// instrumented indirect call reads from address 0.
+	//
+	// A zero-filled table is enough here: a zero entry sends __cfi_slowpath to
+	// __loader_cfi_fail, which the virtual ld-android binds to a returning stub,
+	// so the check is skipped instead of aborting. The table only has to cover
+	// the indices of real guest code, and 64 MiB covers every address below
+	// 8 TiB, far above the module area and the anonymous arena.
+	if (!impl_->cfi_shadow_ready)
+	{
+		auto cfi_init = impl_->modules->lookupGlobal("__cfi_init");
+		if (cfi_init.ok())
+		{
+			constexpr uint64_t kCfiShadowSize = 64ULL * 1024 * 1024;
+			auto shadow = impl_->memory.map(kCfiShadowSize, PermReadWrite, "cfi-shadow");
+			if (!shadow.ok())
+			{
+				return shadow.error();
+			}
+			const std::array<uint64_t, 8> cfi_args = { shadow.value().value() };
+			auto called = impl_->scheduler->callFunction(cfi_init.value(), cfi_args);
+			if (!called.ok())
+			{
+				if (called.error().code == ErrorCode::EmulationFault)
+				{
+					impl_->state = Impl::State::Faulted;
+				}
+				return called.error();
+			}
+			impl_->cfi_shadow_ready = true;
 		}
 	}
 

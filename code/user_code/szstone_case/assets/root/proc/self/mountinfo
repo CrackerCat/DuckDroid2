@@ -1,0 +1,239 @@
+29 28 259:38 / / ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+30 29 0:16 / /dev rw,nosuid,relatime shared:2 - tmpfs tmpfs rw,seclabel,size=2861168k,nr_inodes=715292,mode=755
+31 30 0:17 / /dev/pts rw,relatime shared:3 - devpts devpts rw,seclabel,mode=600,ptmxmode=000
+32 29 0:4 / /proc rw,relatime shared:4 - proc proc rw,gid=3009,hidepid=2
+33 29 0:18 / /sys rw,relatime shared:5 - sysfs sysfs rw,seclabel
+34 33 0:14 / /sys/fs/selinux rw,relatime shared:6 - selinuxfs selinuxfs rw
+35 29 0:19 / /mnt rw,nosuid,nodev,noexec,relatime shared:7 - tmpfs tmpfs rw,seclabel,size=2861168k,nr_inodes=715292,mode=755,gid=1000
+36 35 0:19 /user /mnt/installer rw,nosuid,nodev,noexec,relatime shared:10 master:7 - tmpfs tmpfs rw,seclabel,size=2861168k,nr_inodes=715292,mode=755,gid=1000
+37 35 0:19 /user /mnt/androidwritable rw,nosuid,nodev,noexec,relatime shared:11 master:7 - tmpfs tmpfs rw,seclabel,size=2861168k,nr_inodes=715292,mode=755,gid=1000
+38 29 259:2 / /system_ext ro,relatime shared:8 - ext4 /dev/block/by-name/cust ro,seclabel,discard
+39 29 259:37 / /vendor ro,relatime shared:9 - ext4 /dev/block/by-name/vendor ro,seclabel,discard
+40 29 0:20 / /apex rw,nosuid,nodev,noexec,relatime - tmpfs tmpfs rw,seclabel,size=2861168k,nr_inodes=715292,mode=755
+41 29 0:21 / /linkerconfig rw,nosuid,nodev,noexec,relatime - tmpfs tmpfs rw,seclabel,size=2861168k,nr_inodes=715292,mode=755
+43 33 0:22 / /sys/fs/cgroup rw,nosuid,nodev,noexec,relatime shared:12 - cgroup2 none rw
+45 30 0:23 / /dev/cpuctl rw,nosuid,nodev,noexec,relatime shared:13 - cgroup none rw,cpu
+47 30 0:24 / /dev/cpuset rw,nosuid,nodev,noexec,relatime shared:14 - cgroup none rw,cpuset,noprefix,release_agent=/sbin/cpuset_release_agent
+49 30 0:25 / /dev/memcg rw,nosuid,nodev,noexec,relatime shared:15 - cgroup none rw,memory
+51 30 0:26 / /dev/stune rw,nosuid,nodev,noexec,relatime shared:16 - cgroup none rw,schedtune
+63 33 0:8 / /sys/kernel/tracing rw,relatime shared:17 - tracefs tracefs rw,seclabel,gid=3012
+65 33 0:6 / /sys/kernel/debug rw,relatime shared:18 - debugfs debugfs rw,seclabel
+67 29 0:13 / /config rw,nosuid,nodev,noexec,relatime shared:19 - configfs none rw
+69 33 0:27 / /sys/fs/fuse/connections rw,relatime shared:20 - fusectl none rw
+71 33 0:28 / /sys/fs/bpf rw,nosuid,nodev,noexec,relatime shared:21 - bpf bpf rw
+73 33 0:29 / /sys/fs/pstore rw,nosuid,nodev,noexec,relatime shared:22 - pstore pstore rw,seclabel
+75 65 0:8 / /sys/kernel/debug/tracing rw,relatime shared:23 - tracefs tracefs rw,seclabel,gid=3012
+77 29 259:5 / /data rw,nosuid,nodev,noatime shared:24 - ext4 /dev/block/bootdevice/by-name/userdata rw,seclabel,nobarrier,noauto_da_alloc,data=ordered
+79 39 259:36 / /vendor/firmware_mnt ro,relatime shared:25 - vfat /dev/block/bootdevice/by-name/modem ro,context=u:object_r:firmware_file:s0,gid=1000,fmask=0337,dmask=0227,codepage=437,iocharset=utf8,shortname=lower,errors=remount-ro
+81 39 259:34 / /vendor/dsp ro,nosuid,nodev,relatime shared:26 - ext4 /dev/block/bootdevice/by-name/dsp ro,seclabel,data=ordered
+83 35 8:14 / /mnt/vendor/persist rw,nosuid,nodev,noatime shared:27 - ext4 /dev/block/bootdevice/by-name/persist rw,seclabel,data=ordered
+85 39 259:14 / /vendor/bt_firmware ro,relatime shared:28 - vfat /dev/block/bootdevice/by-name/bluetooth ro,context=u:object_r:bt_firmware_file:s0,uid=1002,gid=3002,fmask=0337,dmask=0227,codepage=437,iocharset=utf8,shortname=lower,errors=remount-ro
+87 29 259:4 / /cache rw,nosuid,nodev,noatime shared:29 - ext4 /dev/block/bootdevice/by-name/cache rw,seclabel,data=ordered
+89 29 0:19 /user/0 /storage rw,nosuid,nodev,noexec,relatime shared:7 - tmpfs tmpfs rw,seclabel,size=2861168k,nr_inodes=715292,mode=755,gid=1000
+90 41 0:21 /default /linkerconfig rw,nosuid,nodev,noexec,relatime - tmpfs tmpfs rw,seclabel,size=2861168k,nr_inodes=715292,mode=755
+91 40 7:32 / /apex/com.android.ipsec@319999900 ro,nodev,noatime - ext4 /dev/block/loop4 ro,dirsync,seclabel
+92 40 7:32 / /apex/com.android.ipsec ro,nodev,noatime - ext4 /dev/block/loop4 ro,dirsync,seclabel
+93 40 7:40 / /apex/com.android.adbd@319999999 ro,nodev,noatime - ext4 /dev/block/loop5 ro,dirsync,seclabel
+95 40 7:40 / /apex/com.android.adbd ro,nodev,noatime - ext4 /dev/block/loop5 ro,dirsync,seclabel
+94 40 7:48 / /apex/com.android.tethering@319999900 ro,nodev,noatime - ext4 /dev/block/loop6 ro,dirsync,seclabel
+96 40 7:48 / /apex/com.android.tethering ro,nodev,noatime - ext4 /dev/block/loop6 ro,dirsync,seclabel
+97 40 7:56 / /apex/com.android.os.statsd@319999900 ro,nodev,noatime - ext4 /dev/block/loop7 ro,dirsync,seclabel
+99 40 7:56 / /apex/com.android.os.statsd ro,nodev,noatime - ext4 /dev/block/loop7 ro,dirsync,seclabel
+98 40 7:64 / /apex/com.android.runtime@1 ro,nodev,noatime - ext4 /dev/block/loop8 ro,dirsync,seclabel
+100 40 7:64 / /apex/com.android.runtime ro,nodev,noatime - ext4 /dev/block/loop8 ro,dirsync,seclabel
+101 40 7:72 / /apex/com.android.neuralnetworks@319999900 ro,nodev,noatime - ext4 /dev/block/loop9 ro,dirsync,seclabel
+103 40 7:72 / /apex/com.android.neuralnetworks ro,nodev,noatime - ext4 /dev/block/loop9 ro,dirsync,seclabel
+102 40 7:80 / /apex/com.android.permission@319999900 ro,nodev,noatime - ext4 /dev/block/loop10 ro,dirsync,seclabel
+104 40 7:88 / /apex/com.android.extservices@319999900 ro,nodev,noatime - ext4 /dev/block/loop11 ro,dirsync,seclabel
+107 40 7:80 / /apex/com.android.permission ro,nodev,noatime - ext4 /dev/block/loop10 ro,dirsync,seclabel
+108 40 7:88 / /apex/com.android.extservices ro,nodev,noatime - ext4 /dev/block/loop11 ro,dirsync,seclabel
+106 40 7:104 / /apex/com.android.tzdata@319999900 ro,nodev,noatime - ext4 /dev/block/loop13 ro,dirsync,seclabel
+105 40 7:96 / /apex/com.android.art@319999900 ro,nodev,noatime - ext4 /dev/block/loop12 ro,dirsync,seclabel
+109 40 7:104 / /apex/com.android.tzdata ro,nodev,noatime - ext4 /dev/block/loop13 ro,dirsync,seclabel
+110 40 7:96 / /apex/com.android.art ro,nodev,noatime - ext4 /dev/block/loop12 ro,dirsync,seclabel
+111 40 7:112 / /apex/com.android.appsearch@300000000 ro,nodev,noatime - ext4 /dev/block/loop14 ro,dirsync,seclabel
+112 40 7:112 / /apex/com.android.appsearch ro,nodev,noatime - ext4 /dev/block/loop14 ro,dirsync,seclabel
+113 40 7:120 / /apex/com.android.media.swcodec@319999900 ro,nodev,noatime - ext4 /dev/block/loop15 ro,dirsync,seclabel
+115 40 7:120 / /apex/com.android.media.swcodec ro,nodev,noatime - ext4 /dev/block/loop15 ro,dirsync,seclabel
+114 40 7:136 / /apex/com.android.scheduling@319999900 ro,nodev,noatime - ext4 /dev/block/loop17 ro,dirsync,seclabel
+116 40 7:136 / /apex/com.android.scheduling ro,nodev,noatime - ext4 /dev/block/loop17 ro,dirsync,seclabel
+117 40 7:144 / /apex/com.android.vndk.v32@1 ro,nodev,noatime - ext4 /dev/block/loop18 ro,dirsync,seclabel
+118 40 7:152 / /apex/com.android.cellbroadcast@319999900 ro,nodev,noatime - ext4 /dev/block/loop19 ro,dirsync,seclabel
+121 40 7:144 / /apex/com.android.vndk.v32 ro,nodev,noatime - ext4 /dev/block/loop18 ro,dirsync,seclabel
+119 40 7:128 / /apex/com.android.conscrypt@319999900 ro,nodev,noatime - ext4 /dev/block/loop16 ro,dirsync,seclabel
+122 40 7:152 / /apex/com.android.cellbroadcast ro,nodev,noatime - ext4 /dev/block/loop19 ro,dirsync,seclabel
+120 40 7:160 / /apex/com.android.media@319999900 ro,nodev,noatime - ext4 /dev/block/loop20 ro,dirsync,seclabel
+123 40 7:128 / /apex/com.android.conscrypt ro,nodev,noatime - ext4 /dev/block/loop16 ro,dirsync,seclabel
+125 40 7:160 / /apex/com.android.media ro,nodev,noatime - ext4 /dev/block/loop20 ro,dirsync,seclabel
+126 40 7:168 / /apex/com.android.mediaprovider@319999910 ro,nodev,noatime - ext4 /dev/block/loop21 ro,dirsync,seclabel
+127 40 7:184 / /apex/com.android.i18n@1 ro,nodev,noatime - ext4 /dev/block/loop23 ro,dirsync,seclabel
+124 40 7:176 / /apex/com.android.sdkext@319999900 ro,nodev,noatime - ext4 /dev/block/loop22 ro,dirsync,seclabel
+128 40 7:168 / /apex/com.android.mediaprovider ro,nodev,noatime - ext4 /dev/block/loop21 ro,dirsync,seclabel
+129 40 7:184 / /apex/com.android.i18n ro,nodev,noatime - ext4 /dev/block/loop23 ro,dirsync,seclabel
+130 40 7:176 / /apex/com.android.sdkext ro,nodev,noatime - ext4 /dev/block/loop22 ro,dirsync,seclabel
+131 40 7:192 / /apex/com.android.wifi@319999900 ro,nodev,noatime - ext4 /dev/block/loop24 ro,dirsync,seclabel
+133 40 7:192 / /apex/com.android.wifi ro,nodev,noatime - ext4 /dev/block/loop24 ro,dirsync,seclabel
+132 40 7:200 / /apex/com.android.resolv@319999900 ro,nodev,noatime - ext4 /dev/block/loop25 ro,dirsync,seclabel
+134 40 7:208 / /apex/com.android.apex.cts.shim@1 ro,nodev,noatime - ext4 /dev/block/loop26 ro,dirsync,seclabel
+135 77 259:5 /data /data/user/0 rw,nosuid,nodev,noatime shared:24 - ext4 /dev/block/bootdevice/by-name/userdata rw,seclabel,nobarrier,noauto_da_alloc,data=ordered
+137 40 7:200 / /apex/com.android.resolv ro,nodev,noatime - ext4 /dev/block/loop25 ro,dirsync,seclabel
+138 29 0:30 / /data_mirror rw,nosuid,nodev,noexec,relatime shared:30 - tmpfs tmpfs rw,seclabel,size=2861168k,nr_inodes=715292,mode=700,gid=1000
+140 40 7:208 / /apex/com.android.apex.cts.shim ro,nodev,noatime - ext4 /dev/block/loop26 ro,dirsync,seclabel
+141 138 259:5 /user /data_mirror/data_ce/null rw,nosuid,nodev,noatime shared:24 - ext4 /dev/block/bootdevice/by-name/userdata rw,seclabel,nobarrier,noauto_da_alloc,data=ordered
+142 141 259:5 /data /data_mirror/data_ce/null/0 rw,nosuid,nodev,noatime shared:24 - ext4 /dev/block/bootdevice/by-name/userdata rw,seclabel,nobarrier,noauto_da_alloc,data=ordered
+145 138 259:5 /user_de /data_mirror/data_de/null rw,nosuid,nodev,noatime shared:24 - ext4 /dev/block/bootdevice/by-name/userdata rw,seclabel,nobarrier,noauto_da_alloc,data=ordered
+147 138 259:5 /misc/profiles/cur /data_mirror/cur_profiles rw,nosuid,nodev,noatime shared:24 - ext4 /dev/block/bootdevice/by-name/userdata rw,seclabel,nobarrier,noauto_da_alloc,data=ordered
+149 138 259:5 /misc/profiles/ref /data_mirror/ref_profiles rw,nosuid,nodev,noatime shared:24 - ext4 /dev/block/bootdevice/by-name/userdata rw,seclabel,nobarrier,noauto_da_alloc,data=ordered
+151 40 0:20 /.default-apex-info-list.xml /apex/apex-info-list.xml rw,nosuid,nodev,noexec,relatime - tmpfs tmpfs rw,seclabel,size=2861168k,nr_inodes=715292,mode=755
+152 29 0:31 / /debug_ramdisk rw,relatime - tmpfs APatch rw,seclabel,size=2861168k,nr_inodes=715292
+154 152 0:32 / /debug_ramdisk/pts rw,relatime - devpts APatch rw,seclabel,mode=600,ptmxmode=000
+156 29 0:33 /system/etc/security/cacerts /system/etc/security/cacerts rw,relatime - tmpfs APatch rw,seclabel,size=2861168k,nr_inodes=715292
+157 156 259:38 /system/etc/security/cacerts/7892ad52.0 /system/etc/security/cacerts/7892ad52.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+158 156 259:38 /system/etc/security/cacerts/b872f2b4.0 /system/etc/security/cacerts/b872f2b4.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+159 156 259:38 /system/etc/security/cacerts/bd43e1dd.0 /system/etc/security/cacerts/bd43e1dd.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+160 156 259:38 /system/etc/security/cacerts/2add47b6.0 /system/etc/security/cacerts/2add47b6.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+161 156 259:38 /system/etc/security/cacerts/9591a472.0 /system/etc/security/cacerts/9591a472.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+162 156 259:38 /system/etc/security/cacerts/40dc992e.0 /system/etc/security/cacerts/40dc992e.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+163 156 259:38 /system/etc/security/cacerts/d18e9066.0 /system/etc/security/cacerts/d18e9066.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+164 156 259:38 /system/etc/security/cacerts/1eb37bdf.0 /system/etc/security/cacerts/1eb37bdf.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+165 156 259:38 /system/etc/security/cacerts/f013ecaf.0 /system/etc/security/cacerts/f013ecaf.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+166 156 259:38 /system/etc/security/cacerts/86212b19.0 /system/etc/security/cacerts/86212b19.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+167 156 259:38 /system/etc/security/cacerts/6b03dec0.0 /system/etc/security/cacerts/6b03dec0.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+168 156 259:38 /system/etc/security/cacerts/bc3f2570.0 /system/etc/security/cacerts/bc3f2570.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+169 156 259:38 /system/etc/security/cacerts/b936d1c6.0 /system/etc/security/cacerts/b936d1c6.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+170 156 259:38 /system/etc/security/cacerts/9f533518.0 /system/etc/security/cacerts/9f533518.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+171 156 259:38 /system/etc/security/cacerts/7a7c655d.0 /system/etc/security/cacerts/7a7c655d.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+172 156 259:38 /system/etc/security/cacerts/882de061.0 /system/etc/security/cacerts/882de061.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+173 156 259:38 /system/etc/security/cacerts/31188b5e.0 /system/etc/security/cacerts/31188b5e.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+174 156 259:38 /system/etc/security/cacerts/3ad48a91.0 /system/etc/security/cacerts/3ad48a91.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+175 156 259:38 /system/etc/security/cacerts/01419da9.0 /system/etc/security/cacerts/01419da9.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+176 156 259:38 /system/etc/security/cacerts/985c1f52.0 /system/etc/security/cacerts/985c1f52.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+177 156 259:38 /system/etc/security/cacerts/da7377f6.0 /system/etc/security/cacerts/da7377f6.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+178 156 259:38 /system/etc/security/cacerts/10531352.0 /system/etc/security/cacerts/10531352.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+179 156 259:38 /system/etc/security/cacerts/52b525c7.0 /system/etc/security/cacerts/52b525c7.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+180 156 259:38 /system/etc/security/cacerts/fb5fa911.0 /system/etc/security/cacerts/fb5fa911.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+181 156 259:38 /system/etc/security/cacerts/33ee480d.0 /system/etc/security/cacerts/33ee480d.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+182 156 259:38 /system/etc/security/cacerts/869fbf79.0 /system/etc/security/cacerts/869fbf79.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+183 156 259:38 /system/etc/security/cacerts/76579174.0 /system/etc/security/cacerts/76579174.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+184 156 259:38 /system/etc/security/cacerts/5acf816d.0 /system/etc/security/cacerts/5acf816d.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+185 156 259:38 /system/etc/security/cacerts/d06393bb.0 /system/etc/security/cacerts/d06393bb.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+186 156 259:38 /system/etc/security/cacerts/d39b0a2c.0 /system/etc/security/cacerts/d39b0a2c.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+187 156 259:38 /system/etc/security/cacerts/23f4c490.0 /system/etc/security/cacerts/23f4c490.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+188 156 259:38 /system/etc/security/cacerts/9576d26b.0 /system/etc/security/cacerts/9576d26b.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+189 156 259:38 /system/etc/security/cacerts/455f1b52.0 /system/etc/security/cacerts/455f1b52.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+190 156 259:38 /system/etc/security/cacerts/95aff9e3.0 /system/etc/security/cacerts/95aff9e3.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+191 156 259:38 /system/etc/security/cacerts/e442e424.0 /system/etc/security/cacerts/e442e424.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+192 156 259:38 /system/etc/security/cacerts/6187b673.0 /system/etc/security/cacerts/6187b673.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+193 156 259:38 /system/etc/security/cacerts/1e1eab7c.0 /system/etc/security/cacerts/1e1eab7c.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+194 156 259:38 /system/etc/security/cacerts/bdacca6f.0 /system/etc/security/cacerts/bdacca6f.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+195 156 259:38 /system/etc/security/cacerts/3c899c73.0 /system/etc/security/cacerts/3c899c73.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+196 156 259:38 /system/etc/security/cacerts/edcbddb5.0 /system/etc/security/cacerts/edcbddb5.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+197 156 259:38 /system/etc/security/cacerts/ccc52f49.0 /system/etc/security/cacerts/ccc52f49.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+198 156 259:38 /system/etc/security/cacerts/dfc0fe80.0 /system/etc/security/cacerts/dfc0fe80.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+199 156 259:38 /system/etc/security/cacerts/8d6437c3.0 /system/etc/security/cacerts/8d6437c3.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+200 156 259:38 /system/etc/security/cacerts/a3896b44.0 /system/etc/security/cacerts/a3896b44.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+201 156 259:38 /system/etc/security/cacerts/d16a5865.0 /system/etc/security/cacerts/d16a5865.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+202 156 259:38 /system/etc/security/cacerts/aeb67534.0 /system/etc/security/cacerts/aeb67534.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+203 156 259:38 /system/etc/security/cacerts/63a2c897.0 /system/etc/security/cacerts/63a2c897.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+204 156 259:38 /system/etc/security/cacerts/b0f3e76e.0 /system/etc/security/cacerts/b0f3e76e.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+205 156 259:38 /system/etc/security/cacerts/60afe812.0 /system/etc/security/cacerts/60afe812.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+206 156 259:38 /system/etc/security/cacerts/9479c8c3.0 /system/etc/security/cacerts/9479c8c3.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+207 156 259:38 /system/etc/security/cacerts/89c02a45.0 /system/etc/security/cacerts/89c02a45.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+208 156 259:38 /system/etc/security/cacerts/83e9984f.0 /system/etc/security/cacerts/83e9984f.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+209 156 259:38 /system/etc/security/cacerts/f0cd152c.0 /system/etc/security/cacerts/f0cd152c.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+210 156 259:38 /system/etc/security/cacerts/a9d40e02.0 /system/etc/security/cacerts/a9d40e02.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+211 156 259:38 /system/etc/security/cacerts/27af790d.0 /system/etc/security/cacerts/27af790d.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+212 156 259:38 /system/etc/security/cacerts/1e8e7201.0 /system/etc/security/cacerts/1e8e7201.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+213 156 259:38 /system/etc/security/cacerts/e8651083.0 /system/etc/security/cacerts/e8651083.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+214 156 259:38 /system/etc/security/cacerts/82223c44.0 /system/etc/security/cacerts/82223c44.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+215 156 259:38 /system/etc/security/cacerts/d4c339cb.0 /system/etc/security/cacerts/d4c339cb.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+216 156 259:38 /system/etc/security/cacerts/583d0756.0 /system/etc/security/cacerts/583d0756.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+217 156 259:38 /system/etc/security/cacerts/5cf9d536.0 /system/etc/security/cacerts/5cf9d536.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+218 156 259:38 /system/etc/security/cacerts/c90bc37d.0 /system/etc/security/cacerts/c90bc37d.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+219 156 259:38 /system/etc/security/cacerts/b3fb433b.0 /system/etc/security/cacerts/b3fb433b.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+220 156 259:38 /system/etc/security/cacerts/304d27c3.0 /system/etc/security/cacerts/304d27c3.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+221 156 259:38 /system/etc/security/cacerts/a81e292b.0 /system/etc/security/cacerts/a81e292b.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+222 156 259:38 /system/etc/security/cacerts/1ae85e5e.0 /system/etc/security/cacerts/1ae85e5e.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+223 156 259:38 /system/etc/security/cacerts/2d9dafe4.0 /system/etc/security/cacerts/2d9dafe4.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+224 156 259:38 /system/etc/security/cacerts/3e7271e8.0 /system/etc/security/cacerts/3e7271e8.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+225 156 259:38 /system/etc/security/cacerts/ab5346f4.0 /system/etc/security/cacerts/ab5346f4.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+226 156 259:38 /system/etc/security/cacerts/ab59055e.0 /system/etc/security/cacerts/ab59055e.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+227 156 259:38 /system/etc/security/cacerts/d41b5e2a.0 /system/etc/security/cacerts/d41b5e2a.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+228 156 259:38 /system/etc/security/cacerts/a7605362.0 /system/etc/security/cacerts/a7605362.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+229 156 259:38 /system/etc/security/cacerts/111e6273.0 /system/etc/security/cacerts/111e6273.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+230 156 259:38 /system/etc/security/cacerts/cb1c3204.0 /system/etc/security/cacerts/cb1c3204.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+231 156 259:38 /system/etc/security/cacerts/5f47b495.0 /system/etc/security/cacerts/5f47b495.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+232 156 259:38 /system/etc/security/cacerts/dbff3a01.0 /system/etc/security/cacerts/dbff3a01.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+233 156 259:38 /system/etc/security/cacerts/3c9a4d3b.0 /system/etc/security/cacerts/3c9a4d3b.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+234 156 259:38 /system/etc/security/cacerts/b0ed035a.0 /system/etc/security/cacerts/b0ed035a.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+235 156 259:38 /system/etc/security/cacerts/4be590e0.0 /system/etc/security/cacerts/4be590e0.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+236 156 259:38 /system/etc/security/cacerts/04f60c28.0 /system/etc/security/cacerts/04f60c28.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+237 156 259:38 /system/etc/security/cacerts/ed39abd0.0 /system/etc/security/cacerts/ed39abd0.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+238 156 259:38 /system/etc/security/cacerts/48a195d8.0 /system/etc/security/cacerts/48a195d8.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+239 156 259:38 /system/etc/security/cacerts/9d6523ce.0 /system/etc/security/cacerts/9d6523ce.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+240 156 259:38 /system/etc/security/cacerts/302904dd.0 /system/etc/security/cacerts/302904dd.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+241 156 259:38 /system/etc/security/cacerts/dc99f41e.0 /system/etc/security/cacerts/dc99f41e.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+242 156 259:38 /system/etc/security/cacerts/9685a493.0 /system/etc/security/cacerts/9685a493.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+243 156 259:38 /system/etc/security/cacerts/75680d2e.0 /system/etc/security/cacerts/75680d2e.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+244 156 259:38 /system/etc/security/cacerts/3c860d51.0 /system/etc/security/cacerts/3c860d51.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+245 156 259:38 /system/etc/security/cacerts/7a819ef2.0 /system/etc/security/cacerts/7a819ef2.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+246 156 259:38 /system/etc/security/cacerts/399e7759.0 /system/etc/security/cacerts/399e7759.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+247 156 259:38 /system/etc/security/cacerts/219d9499.0 /system/etc/security/cacerts/219d9499.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+248 156 259:38 /system/etc/security/cacerts/35105088.0 /system/etc/security/cacerts/35105088.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+249 156 259:38 /system/etc/security/cacerts/343eb6cb.0 /system/etc/security/cacerts/343eb6cb.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+250 156 259:38 /system/etc/security/cacerts/f459871d.0 /system/etc/security/cacerts/f459871d.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+251 156 259:38 /system/etc/security/cacerts/c51c224c.0 /system/etc/security/cacerts/c51c224c.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+252 156 259:38 /system/etc/security/cacerts/9339512a.0 /system/etc/security/cacerts/9339512a.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+253 156 259:38 /system/etc/security/cacerts/69105f4f.0 /system/etc/security/cacerts/69105f4f.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+254 156 259:38 /system/etc/security/cacerts/9aef356c.0 /system/etc/security/cacerts/9aef356c.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+255 156 259:38 /system/etc/security/cacerts/b74d2bd5.0 /system/etc/security/cacerts/b74d2bd5.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+256 156 259:38 /system/etc/security/cacerts/85cde254.0 /system/etc/security/cacerts/85cde254.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+257 156 259:38 /system/etc/security/cacerts/c491639e.0 /system/etc/security/cacerts/c491639e.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+258 156 259:38 /system/etc/security/cacerts/e48193cf.0 /system/etc/security/cacerts/e48193cf.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+259 156 259:38 /system/etc/security/cacerts/c559d742.0 /system/etc/security/cacerts/c559d742.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+260 156 259:38 /system/etc/security/cacerts/d7746a63.0 /system/etc/security/cacerts/d7746a63.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+261 156 259:38 /system/etc/security/cacerts/0d69c7e1.0 /system/etc/security/cacerts/0d69c7e1.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+262 156 259:38 /system/etc/security/cacerts/d59297b8.0 /system/etc/security/cacerts/d59297b8.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+263 156 259:38 /system/etc/security/cacerts/cf701eeb.0 /system/etc/security/cacerts/cf701eeb.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+264 156 259:38 /system/etc/security/cacerts/9282e51c.0 /system/etc/security/cacerts/9282e51c.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+265 156 259:38 /system/etc/security/cacerts/524d9b43.0 /system/etc/security/cacerts/524d9b43.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+266 156 259:38 /system/etc/security/cacerts/fde84897.0 /system/etc/security/cacerts/fde84897.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+267 156 259:38 /system/etc/security/cacerts/a2c66da8.0 /system/etc/security/cacerts/a2c66da8.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+268 156 259:38 /system/etc/security/cacerts/2fa87019.0 /system/etc/security/cacerts/2fa87019.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+269 156 259:38 /system/etc/security/cacerts/b7db1890.0 /system/etc/security/cacerts/b7db1890.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+270 156 259:38 /system/etc/security/cacerts/81b9768f.0 /system/etc/security/cacerts/81b9768f.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+271 156 259:38 /system/etc/security/cacerts/1f58a078.0 /system/etc/security/cacerts/1f58a078.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+272 156 259:38 /system/etc/security/cacerts/88950faa.0 /system/etc/security/cacerts/88950faa.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+273 156 259:38 /system/etc/security/cacerts/5a3f0ff8.0 /system/etc/security/cacerts/5a3f0ff8.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+274 156 259:38 /system/etc/security/cacerts/5046c355.0 /system/etc/security/cacerts/5046c355.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+275 156 259:38 /system/etc/security/cacerts/1df5a75f.0 /system/etc/security/cacerts/1df5a75f.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+276 156 259:38 /system/etc/security/cacerts/bf64f35b.0 /system/etc/security/cacerts/bf64f35b.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+277 156 259:38 /system/etc/security/cacerts/dbc54cab.0 /system/etc/security/cacerts/dbc54cab.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+278 156 259:38 /system/etc/security/cacerts/5a250ea7.0 /system/etc/security/cacerts/5a250ea7.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+279 156 259:38 /system/etc/security/cacerts/12d55845.0 /system/etc/security/cacerts/12d55845.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+280 156 259:38 /system/etc/security/cacerts/fd08c599.0 /system/etc/security/cacerts/fd08c599.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+281 156 259:38 /system/etc/security/cacerts/3c6676aa.0 /system/etc/security/cacerts/3c6676aa.0 ro,relatime shared:1 - ext4 /dev/block/by-name/system ro,seclabel,discard
+282 156 259:5 /adb/modules/reqable-magisk/system/etc/security/cacerts/52876a7e.0 /system/etc/security/cacerts/52876a7e.0 rw,nosuid,nodev,noatime shared:24 - ext4 /dev/block/bootdevice/by-name/userdata rw,seclabel,nobarrier,noauto_da_alloc,data=ordered
+155 30 0:34 / /dev/usb-ffs/adb rw,relatime shared:33 - functionfs adb rw
+411 30 0:35 / /dev/ffs-diag rw,relatime shared:34 - functionfs diag rw
+413 30 0:36 / /dev/ffs-diag-1 rw,relatime shared:35 - functionfs diag_mdm rw
+415 30 0:37 / /dev/ffs-diag-2 rw,relatime shared:36 - functionfs diag_mdm2 rw
+859 110 259:5 /adb/modules/zygisk_lsposed/bin/dex2oat32 /apex/com.android.art/bin/dex2oat32 ro,noatime shared:24 - ext4 /dev/block/bootdevice/by-name/userdata rw,seclabel,nobarrier,noauto_da_alloc,data=ordered
+860 110 259:5 /adb/modules/zygisk_lsposed/bin/dex2oat64 /apex/com.android.art/bin/dex2oat64 ro,noatime shared:24 - ext4 /dev/block/bootdevice/by-name/userdata rw,seclabel,nobarrier,noauto_da_alloc,data=ordered
+5954 35 0:89 / /mnt/runtime/default/emulated rw,nosuid,nodev,noexec,noatime shared:37 - sdcardfs /data/media rw,fsuid=1023,fsgid=1023,gid=1015,multiuser,mask=6,derive_gid,default_normal
+5981 35 0:89 / /mnt/runtime/read/emulated rw,nosuid,nodev,noexec,noatime shared:37 - sdcardfs /data/media rw,fsuid=1023,fsgid=1023,gid=9997,multiuser,mask=23,derive_gid,default_normal
+6008 35 0:89 / /mnt/runtime/write/emulated rw,nosuid,nodev,noexec,noatime shared:37 - sdcardfs /data/media rw,fsuid=1023,fsgid=1023,gid=9997,multiuser,mask=7,derive_gid,default_normal
+6035 35 0:89 / /mnt/runtime/full/emulated rw,nosuid,nodev,noexec,noatime shared:37 - sdcardfs /data/media rw,fsuid=1023,fsgid=1023,gid=9997,multiuser,mask=7,derive_gid,default_normal
+6377 36 0:95 / /mnt/installer/0/emulated rw,nosuid,nodev,noexec,noatime shared:40 master:38 - fuse /dev/fuse rw,lazytime,user_id=0,group_id=0,allow_other
+6349 37 0:95 / /mnt/androidwritable/0/emulated rw,nosuid,nodev,noexec,noatime shared:39 master:38 - fuse /dev/fuse rw,lazytime,user_id=0,group_id=0,allow_other
+6299 35 0:95 / /mnt/user/0/emulated rw,nosuid,nodev,noexec,noatime shared:38 - fuse /dev/fuse rw,lazytime,user_id=0,group_id=0,allow_other
+6298 89 0:95 / /storage/emulated rw,nosuid,nodev,noexec,noatime shared:38 - fuse /dev/fuse rw,lazytime,user_id=0,group_id=0,allow_other
+6407 35 0:89 / /mnt/pass_through/0/emulated rw,nosuid,nodev,noexec,noatime shared:37 - sdcardfs /data/media rw,fsuid=1023,fsgid=1023,gid=9997,multiuser,mask=7,derive_gid,default_normal
+9800 6349 0:89 /0/Android/data /mnt/androidwritable/0/emulated/0/Android/data rw,nosuid,nodev,noexec,noatime shared:42 master:37 - sdcardfs /data/media rw,fsuid=1023,fsgid=1023,gid=1015,multiuser,mask=6,derive_gid,default_normal
+9758 6377 0:89 /0/Android/data /mnt/installer/0/emulated/0/Android/data rw,nosuid,nodev,noexec,noatime shared:41 master:37 - sdcardfs /data/media rw,fsuid=1023,fsgid=1023,gid=1015,multiuser,mask=6,derive_gid,default_normal
+9754 6299 0:89 /0/Android/data /mnt/user/0/emulated/0/Android/data rw,nosuid,nodev,noexec,noatime shared:37 - sdcardfs /data/media rw,fsuid=1023,fsgid=1023,gid=1015,multiuser,mask=6,derive_gid,default_normal
+9753 6298 0:89 /0/Android/data /storage/emulated/0/Android/data rw,nosuid,nodev,noexec,noatime shared:37 - sdcardfs /data/media rw,fsuid=1023,fsgid=1023,gid=1015,multiuser,mask=6,derive_gid,default_normal
+9964 6349 0:89 /0/Android/obb /mnt/androidwritable/0/emulated/0/Android/obb rw,nosuid,nodev,noexec,noatime shared:44 master:37 - sdcardfs /data/media rw,fsuid=1023,fsgid=1023,gid=1015,multiuser,mask=6,derive_gid,default_normal
+9918 6299 0:89 /0/Android/obb /mnt/user/0/emulated/0/Android/obb rw,nosuid,nodev,noexec,noatime shared:37 - sdcardfs /data/media rw,fsuid=1023,fsgid=1023,gid=1015,multiuser,mask=6,derive_gid,default_normal
+9917 6298 0:89 /0/Android/obb /storage/emulated/0/Android/obb rw,nosuid,nodev,noexec,noatime shared:37 - sdcardfs /data/media rw,fsuid=1023,fsgid=1023,gid=1015,multiuser,mask=6,derive_gid,default_normal
+9922 6377 0:89 /0/Android/obb /mnt/installer/0/emulated/0/Android/obb rw,nosuid,nodev,noexec,noatime shared:37 - sdcardfs /data/media rw,fsuid=1023,fsgid=1023,gid=9997,multiuser,mask=7,derive_gid,default_normal
