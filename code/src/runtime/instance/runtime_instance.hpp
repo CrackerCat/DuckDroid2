@@ -116,6 +116,16 @@ class RuntimeInstance
 	// before the first callFunction (static TLS is not installed afterwards).
 	Result<uint64_t> loadLibrary(std::string_view path);
 
+	struct ModuleRange
+	{
+		GuestVA base;
+		uint64_t span = 0;
+	};
+
+	// Address range of a loaded module (analysis callers that need to cover a
+	// whole obfuscated target; the range is chosen in target code, not by CLI).
+	Result<ModuleRange> moduleRange(uint64_t handle) const;
+
 	// Address of a symbol exported by the module behind `handle`, or the first
 	// module in load order that exports it.
 	Result<GuestVA> lookupSymbol(uint64_t handle, std::string_view name) const;

@@ -39,6 +39,29 @@ cmake --build build --target duckemu_jdgs_case
 
   与 DuckDroid 参考 runner 在同一注入时钟下逐字节一致。
 
+## 指令级 trace（M8）
+
+```bash
+# 需要 -DDUCKEMU_ENABLE_TRACE=ON 构建
+./build-trace/user_code/duckemu_jdgs_case --trace ./trace_logs/jd
+```
+
+`Bridge.main` 的注册入口是跳板，真实签名流会跨整个 `.text` 调混淆函数（包括
+入口以下的地址）；因此 JD runner 用 `moduleRange(handle)` 作为 hook 覆盖，
+trace 从第一条实际执行的模块指令开始，捕获进入时的 LR，记到 LR/调用返回为止。
+CLI 仍只有 `--trace DIR`。一次 `main(101)` 实测（默认 init + 1 次 sign，指令
+trace 只覆盖 sign）：
+
+| 文件 | 行数 | 大小 |
+|---|---:|---:|
+| `insn/code.log` | 1,171,888 | 129 MiB |
+| `insn/rw.log` | 2,155,668 | 132 MiB |
+| `insn/bl.log` | 1,708 | 107 KiB |
+| `svc.log` | — | 74 KiB |
+
+合计约 261 MiB，耗时约 5.2 s（含初始化/加载）。`code.log` 记录的是 sign 执行
+期间模块内实际执行的指令；`bl.log` 是跳出模块的调用（JNIEnv、libc 等）。
+
 ## 可注入项
 
 | 环境变量 | 作用 | 默认 |

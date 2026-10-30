@@ -126,8 +126,9 @@ thunk / SVC 回到宿主 C++。
 - **指令级 trace**（`-DDUCKEMU_ENABLE_TRACE=ON`）：`code.log` / `bl.log` /
   `rw.log` 严格沿用 QBDI 四件套的列结构、行号和 JSON 约定，另加 `threads.tsv`
   记线程归属。目标 runner 用 `--trace DIR` 一个参数：`svc.log` 写 `DIR/svc.log`，
-  指令 trace 写 `DIR/insn/`，范围是目标代码里写的函数区间（不是 CLI 的 size
-  参数；libeleven 用 `kNativeTraceSize` 圈住 native 的 `[0x40cb4, 0x40f78)`）。
+  指令 trace 写 `DIR/insn/`。trace 从被调用函数的第一条指令开始，捕获进入时的
+  LR，记到 PC == LR 为止（QBDI nested-VM 的结尾）；hook 覆盖是目标模块，由代码
+  决定，不是 CLI 的 size 参数。
   区间内的指令才进 `code.log`；区间外的 callee / bionic / linker 不记录，
   但跳出区间的 `bl/blr` 进 `bl.log`，目标落在 thunk 页时解析成
   `JNIEnv::NewStringUTF` 这类宿主函数名。`rw.log` 的 `w` 条目在指令 POST 阶段

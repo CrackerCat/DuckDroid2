@@ -906,6 +906,20 @@ Result<GuestVA> RuntimeInstance::lookupSymbol(uint64_t handle, std::string_view 
 	return impl_->modules->lookup(handle, name);
 }
 
+Result<RuntimeInstance::ModuleRange> RuntimeInstance::moduleRange(uint64_t handle) const
+{
+	const loader::Module *module = impl_->modules->registry().findByHandle(handle);
+	if (module == nullptr)
+	{
+		return Error{ ErrorCode::NotFound, "unknown module handle" };
+	}
+	if (module->is_virtual || module->span == 0)
+	{
+		return Error{ ErrorCode::InvalidArgument, "module has no address range" };
+	}
+	return ModuleRange{ GuestVA{ module->base }, module->span };
+}
+
 Result<GuestVA> RuntimeInstance::lookupSymbol(std::string_view name) const
 {
 	auto execution = impl_->scheduler->lockExecution();

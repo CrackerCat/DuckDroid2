@@ -320,6 +320,15 @@ struct CurrentInstruction
 	uint8_t access_count = 0;
 };
 
+struct EngineTraceState
+{
+	CurrentInstruction current;
+	bool armed = false;
+	bool finished = false;
+	uint64_t entry_lr = 0;
+	bool have_entry_lr = false;
+};
+
 class FileInsnTrace final : public InsnTraceSink
 {
     public:
@@ -345,6 +354,7 @@ class FileInsnTrace final : public InsnTraceSink
 		, bl_(std::move(bl))
 		, rw_(std::move(rw))
 		, threads_(std::move(threads))
+		, stop_at_return_(options.stop_at_return)
 	{
 		DUCKEMU_INFO("insn trace: %s+0x%llx size=0x%llx -> %s",
 			module_name_.c_str(),
@@ -356,6 +366,38 @@ class FileInsnTrace final : public InsnTraceSink
 	void onInstruction(void *engine_pointer, uint64_t engine_id, uint32_t tid, uint64_t address) override
 	{
 		auto *engine = static_cast<uc_engine *>(engine_pointer);
+		EngineTraceState &state = states_[engine_id];
+		if (stop_at_return_)
+		{
+			if (!have_armed_engine_)
+			{
+				// The first in-range instruction after startInsnTrace is the
+				// called function's entry.
+				have_armed_engine_ = true;
+				armed_engine_id_ = engine_id;
+				state.armed = true;
+				uint64_t lr = 0;
+				(void)uc_reg_read(engine, UC_ARM64_REG_LR, &lr);
+				state.entry_lr = lr;
+				state.have_entry_lr = true;
+			}
+			else if (engine_id != armed_engine_id_)
+			{
+				return;
+			}
+			if (state.finished)
+			{
+				return;
+			}
+			if (state.have_entry_lr && address == state.entry_lr)
+			{
+				// The function returned to its caller.
+				flushPending(engine, engine_id);
+				state.finished = true;
+				return;
+			}
+		}
+
 		flushPending(engine, engine_id);
 		if (!recording_)
 		{
@@ -391,7 +433,7 @@ class FileInsnTrace final : public InsnTraceSink
 		}
 
 		const std::string reads = registersJson(engine, info->reads, info->read_count);
-		CurrentInstruction &current = current_[engine_id];
+		CurrentInstruction &current = state.current;
 		current.valid = true;
 		current.line = line;
 		current.pc = address;
@@ -438,19 +480,25 @@ class FileInsnTrace final : public InsnTraceSink
 			return;
 		}
 		auto *engine = static_cast<uc_engine *>(engine_pointer);
-		auto current = current_.find(engine_id);
-		if (current == current_.end() || !current->second.valid)
+		auto state = states_.find(engine_id);
+		if (state == states_.end() || !state->second.current.valid)
 		{
 			return;
 		}
+		if (stop_at_return_ &&
+			(engine_id != armed_engine_id_ || !state->second.armed || state->second.finished))
+		{
+			return;
+		}
+		auto &current = state->second.current;
 		uint64_t pc = 0;
-		if (uc_reg_read(engine, UC_ARM64_REG_PC, &pc) != UC_ERR_OK || pc != current->second.pc)
+		if (uc_reg_read(engine, UC_ARM64_REG_PC, &pc) != UC_ERR_OK || pc != current.pc)
 		{
 			return;
 		}
-		if (current->second.access_count < current->second.accesses.size())
+		if (current.access_count < current.accesses.size())
 		{
-			current->second.accesses[current->second.access_count++] = PendingAccess{ write,
+			current.accesses[current.access_count++] = PendingAccess{ write,
 				address & kAddressMask };
 		}
 	}
@@ -458,10 +506,10 @@ class FileInsnTrace final : public InsnTraceSink
 	void onRunEnd(void *engine_pointer, uint64_t engine_id) override
 	{
 		flushPending(static_cast<uc_engine *>(engine_pointer), engine_id);
-		auto current = current_.find(engine_id);
-		if (current != current_.end())
+		auto state = states_.find(engine_id);
+		if (state != states_.end())
 		{
-			current->second.valid = false;
+			state->second.current.valid = false;
 		}
 	}
 
@@ -492,14 +540,14 @@ class FileInsnTrace final : public InsnTraceSink
 		const std::string writes = registersJson(engine, pending.info->writes, pending.info->write_count);
 		emitCodeLine(pending.line, pending.address, *pending.info, pending.reads, writes, "{}");
 
-		auto current = current_.find(engine_id);
-		if (current != current_.end())
+		auto state = states_.find(engine_id);
+		if (state != states_.end())
 		{
-			for (uint8_t i = 0; i < current->second.access_count; ++i)
+			for (uint8_t i = 0; i < state->second.current.access_count; ++i)
 			{
-				emitMemoryAccess(pending.line, current->second.accesses[i]);
+				emitMemoryAccess(pending.line, state->second.current.accesses[i]);
 			}
-			current->second.access_count = 0;
+			state->second.current.access_count = 0;
 		}
 	}
 
@@ -640,7 +688,10 @@ class FileInsnTrace final : public InsnTraceSink
 	InsnDecoder decoder_;
 
 	std::unordered_map<uint64_t, PendingInstruction> pending_;
-	std::unordered_map<uint64_t, CurrentInstruction> current_;
+	std::unordered_map<uint64_t, EngineTraceState> states_;
+	bool stop_at_return_ = false;
+	bool have_armed_engine_ = false;
+	uint64_t armed_engine_id_ = 0;
 };
 
 } // namespace

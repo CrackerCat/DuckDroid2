@@ -4,6 +4,9 @@
 //   ./duckemu_jdgs_case              # initialize, then sign once
 //   JDGS_REPEAT=10 ./duckemu_jdgs_case
 //   ./duckemu_jdgs_case --trace DIR
+//     # svc.log at DIR/svc.log and the instruction trace of Bridge.main's sign
+//     # flow at DIR/insn/. The range is the loaded target module's range,
+//     # computed in code; the CLI only takes --trace DIR.
 //
 // The Java side (Bridge, the package/signature object graph and the
 // Integer-based status) is jdgs_env.cpp; main installs it before loading
@@ -13,6 +16,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <utility>
@@ -43,6 +47,11 @@ namespace
 
 constexpr uint64_t kSelectorInit = 103;
 constexpr uint64_t kSelectorSign = 101;
+
+// Bridge.main's registered entry is a trampoline; the real sign flow calls
+// obfuscated functions across the whole .text (including addresses below the
+// entry). A contiguous function range would miss it, so the JD analysis range
+// is the loaded module's range. The CLI still only takes --trace DIR.
 // 16.1.50's JD setup is slower than the runtime's 5 s default; the reference
 // runner also allowed 60 s per call.
 constexpr uint64_t kCallTimeoutUs = 60ULL * 1000 * 1000;
@@ -229,6 +238,19 @@ int main(int argc, char **argv)
 		}
 	}
 
+	if (!trace_path.empty())
+	{
+		std::error_code directory_error;
+		std::filesystem::create_directories(trace_path, directory_error);
+		if (directory_error)
+		{
+			std::fprintf(stderr, "cannot create trace directory %s: %s\n",
+				trace_path.c_str(),
+				directory_error.message().c_str());
+			return 1;
+		}
+	}
+
 	RuntimeConfig config;
 	config.library_search_paths = { DUCKEMU_ROM_BOOTSTRAP, DUCKEMU_ROM_LIB64 };
 	// The native opens its own APK through the package code path.
@@ -236,7 +258,7 @@ int main(int argc, char **argv)
 	// The device picture the pack was validated against (Mi 8, SDK 32). The
 	// signer takes a newer platform path at ro.build.version.sdk >= 33.
 	config.property_file = DUCKEMU_JDGS_PROPERTIES;
-	config.trace_path = trace_path;
+	config.trace_path = trace_path.empty() ? std::string{} : trace_path + "/svc.log";
 	config.default_timeout_us = kCallTimeoutUs;
 
 	auto created = RuntimeInstance::create(config);
@@ -315,6 +337,31 @@ int main(int argc, char **argv)
 		}
 	}
 
+	if (!trace_path.empty())
+	{
+		// Trace only the signing call, not the two init calls above. The range
+		// is the target module, computed from the loaded handle in code.
+		auto range = instance.moduleRange(module.value());
+		if (!range.ok())
+		{
+			std::fprintf(stderr, "module range for trace failed: %s\n",
+				range.error().message.c_str());
+			return 1;
+		}
+		observer::InsnTraceOptions options;
+		options.directory = trace_path + "/insn";
+		options.begin = range.value().base;
+		options.size = range.value().span;
+		options.stop_at_return = true;
+		auto started = instance.startInsnTrace(options);
+		if (!started.ok())
+		{
+			std::fprintf(stderr, "start instruction trace failed: %s\n",
+				started.error().message.c_str());
+			return 1;
+		}
+	}
+
 	const jdgs::SignParams params = jdgs::signParamsFromEnvironment();
 	const char *repeat_text = std::getenv("JDGS_REPEAT");
 	const int repeat = repeat_text != nullptr ? std::atoi(repeat_text) : 1;
@@ -328,5 +375,7 @@ int main(int argc, char **argv)
 		}
 		std::printf("%s\n", signature.c_str());
 	}
+
+	instance.stopInsnTrace();
 	return 0;
 }

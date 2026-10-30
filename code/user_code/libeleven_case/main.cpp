@@ -6,9 +6,9 @@
 //   ./duckemu_libeleven_case 1 100  # data(1)..data(100)
 //   ./duckemu_libeleven_case --trace DIR 5
 //     # svc.log at DIR/svc.log and the instruction trace at DIR/insn/.
-//     # The range is the native function's byte range defined below
-//     # (kNativeTraceSize), not a CLI argument; requires
-//     # -DDUCKEMU_ENABLE_TRACE=ON.
+//     # The trace runs from the called function's entry until it returns to
+//     # the LR captured at entry (QBDI nested-VM end); the hook coverage is
+//     # the target module, chosen in code. Requires -DDUCKEMU_ENABLE_TRACE=ON.
 //
 // The Java side of the project (the class and the native method declaration)
 // is libeleven_env.cpp; main installs it explicitly before loading anything.
@@ -46,12 +46,6 @@ constexpr const char *kClassName =
 	"com/yuanrenxue/challenge/fragment/challenge/ChallengeElevenFragment";
 constexpr const char *kMethodName = "data";
 constexpr const char *kSignature = "(I)Ljava/lang/String;";
-
-// The registered native starts at libeleven.so + 0x40cb4. The next function
-// prologue begins at 0x40f78, so the function's own code range is 0x2c4 bytes.
-// This is intentionally a code constant, not a CLI knob: the analysis target
-// owns its trace range.
-constexpr uint64_t kNativeTraceSize = 0x2c4;
 
 std::string romLibc()
 {
@@ -186,17 +180,20 @@ int main(int argc, char **argv)
 
 	if (!trace_path.empty())
 	{
-		auto native = instance.lookupRegisteredNative(kClassName, kMethodName, kSignature);
-		if (!native.ok())
+		// Hook coverage is the target module; the trace starts at the first
+		// instruction the call executes and stops at its LR (QBDI nested VM).
+		auto range = instance.moduleRange(module.value());
+		if (!range.ok())
 		{
-			std::fprintf(stderr, "lookup native for trace failed: %s\n",
-				native.error().message.c_str());
+			std::fprintf(stderr, "module range for trace failed: %s\n",
+				range.error().message.c_str());
 			return 1;
 		}
 		observer::InsnTraceOptions options;
 		options.directory = trace_path + "/insn";
-		options.begin = native.value();
-		options.size = kNativeTraceSize;
+		options.begin = range.value().base;
+		options.size = range.value().span;
+		options.stop_at_return = true;
 		auto started = instance.startInsnTrace(options);
 		if (!started.ok())
 		{
