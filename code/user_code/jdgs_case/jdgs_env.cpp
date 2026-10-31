@@ -9,6 +9,7 @@
 
 #include "common/id/ids.hpp"
 #include "jdgs_case/jdgs_cert.h"
+#include "runtime/jni/envs/envs.hpp"
 #include "runtime/jni/world/java_binder.hpp"
 #include "runtime/jni/world/java_world.hpp"
 #include "runtime/memory/address_space.hpp"
@@ -30,11 +31,6 @@ constexpr const char *kPackageManager = "android/content/pm/PackageManager";
 constexpr const char *kPackageInfo = "android/content/pm/PackageInfo";
 constexpr const char *kSigningInfo = "android/content/pm/SigningInfo";
 constexpr const char *kSignature = "android/content/pm/Signature";
-constexpr const char *kCertificateFactory = "java/security/cert/CertificateFactory";
-constexpr const char *kCertificate = "java/security/cert/Certificate";
-constexpr const char *kByteArrayInputStream = "java/io/ByteArrayInputStream";
-constexpr const char *kFile = "java/io/File";
-constexpr const char *kInteger = "java/lang/Integer";
 
 // 16.1.50 (versionCode 102918): assets/jdjdg-appkey.txt, getJDGVN() constant,
 // and the two asset names Bridge reports to the native.
@@ -64,7 +60,6 @@ constexpr const char *kArgSdkConfig = "83";
 //   [0] byte[] request   [1] payload   [2] dfp eid   [3] pay version
 //   [4] openudid         [5] sdk config   [6] null (ccc inactive)
 JavaWorld *g_world = nullptr;
-uint64_t g_integer_value_field = 0;
 
 const char *EnvOr(const char *name, const char *fallback)
 {
@@ -169,11 +164,6 @@ Result<void> installEnvironment(JavaWorld &world)
 	uint64_t package_info = 0;
 	uint64_t signing_info = 0;
 	uint64_t signature = 0;
-	uint64_t certificate_factory = 0;
-	uint64_t certificate = 0;
-	uint64_t byte_array_input_stream = 0;
-	uint64_t file = 0;
-	uint64_t integer = 0;
 
 	JavaBinder binder(world);
 
@@ -189,11 +179,6 @@ Result<void> installEnvironment(JavaWorld &world)
 		{ kPackageInfo, &package_info },
 		{ kSigningInfo, &signing_info },
 		{ kSignature, &signature },
-		{ kCertificateFactory, &certificate_factory },
-		{ kCertificate, &certificate },
-		{ kByteArrayInputStream, &byte_array_input_stream },
-		{ kFile, &file },
-		{ kInteger, &integer },
 	};
 	for (const ClassSlot &entry : classes)
 	{
@@ -207,9 +192,6 @@ Result<void> installEnvironment(JavaWorld &world)
 	uint64_t package_info_object = 0;
 	uint64_t signing_info_object = 0;
 	uint64_t signature_object = 0;
-	uint64_t certificate_factory_object = 0;
-	uint64_t certificate_object = 0;
-	uint64_t files_dir_object = 0;
 
 	struct ObjectSlot
 	{
@@ -222,40 +204,24 @@ Result<void> installEnvironment(JavaWorld &world)
 		{ package_info, &package_info_object },
 		{ signing_info, &signing_info_object },
 		{ signature, &signature_object },
-		{ certificate_factory, &certificate_factory_object },
-		{ certificate, &certificate_object },
-		{ file, &files_dir_object },
 	};
 	for (const ObjectSlot &entry : objects)
 	{
 		binder.allocateObject(entry.klass, entry.slot);
 	}
 
+	// java.io.File is platform-owned; the project only supplies the path the
+	// app's Context.getFilesDir() reports.
+	auto files_dir = runtime::jni::envs::newFile(world, kFilesDirPath);
+	if (!files_dir.ok())
+	{
+		return files_dir.error();
+	}
+	const uint64_t files_dir_object = files_dir.value();
+
 	uint64_t signature_array = 0;
 	binder.newArray(
 		ArrayElementKind::Object, 1, signature, signature_object, &signature_array);
-
-	// java.lang.Integer carries the init/errno status in an instance field, so
-	// main(103) can answer an Integer object instead of a string.
-	uint64_t integer_value_field = 0;
-	binder.declareField(integer, "value", "I", false, &integer_value_field);
-	g_integer_value_field = integer_value_field;
-	binder.declareMethod(integer, "<init>", "(I)V", false,
-		[value_field = integer_value_field](JavaWorld &java,
-			InvokeContext &call) -> Result<uint64_t> {
-			if (call.args.size() != 1)
-			{
-				return Error{ ErrorCode::InvalidArgument,
-					"Integer.<init> expects one int" };
-			}
-			auto written =
-				java.writeInstanceField(call.receiver, value_field, call.args[0]);
-			if (!written.ok())
-			{
-				return written.error();
-			}
-			return uint64_t{ 0 };
-		});
 
 	// PackageInfo: versionName, versionCode and the signingInfo the native
 	// reads back. GET_SIGNING_CERTIFICATES is the flag value the app passes.
@@ -329,21 +295,10 @@ Result<void> installEnvironment(JavaWorld &world)
 			returnObject(package_info_object))
 		.declareMethod(signing_info, "getApkContentsSigners",
 			"()[Landroid/content/pm/Signature;", false, returnObject(signature_array))
-		.declareMethod(signature, "toByteArray", "()[B", false, returnCertificateBytes())
-		.declareMethod(certificate_factory, "getInstance",
-			"(Ljava/lang/String;)Ljava/security/cert/CertificateFactory;", true,
-			returnObject(certificate_factory_object))
-		.declareMethod(certificate_factory, "generateCertificate",
-			"(Ljava/io/InputStream;)Ljava/security/cert/Certificate;", false,
-			returnObject(certificate_object))
-		.declareMethod(certificate, "getEncoded", "()[B", false, returnCertificateBytes())
-		// The native only checks that a stream exists; CertificateFactory
-		// answers from the embedded certificate, so the stream contents are
-		// unused.
-		.declareMethod(byte_array_input_stream, "<init>", "([B)V", false,
-			[](JavaWorld &, InvokeContext &) -> Result<uint64_t> { return uint64_t{ 0 }; })
-		.declareMethod(file, "getAbsolutePath", "()Ljava/lang/String;", false,
-			returnString(kFilesDirPath));
+		.declareMethod(signature, "toByteArray", "()[B", false, returnCertificateBytes());
+	// The rest of the chain (ByteArrayInputStream, CertificateFactory,
+	// Certificate/X509Certificate, File) is the platform pack: it parses the
+	// DER these bytes carry.
 
 	return std::move(binder).done();
 }
@@ -472,16 +427,11 @@ Result<std::string> readResultString(uint64_t object)
 
 Result<int32_t> readIntegerField(uint64_t object)
 {
-	if (g_world == nullptr || g_integer_value_field == 0)
+	if (g_world == nullptr)
 	{
 		return Error{ ErrorCode::InvalidArgument, "jdgs: installEnvironment has not run" };
 	}
-	auto value = g_world->readInstanceField(object, g_integer_value_field);
-	if (!value.ok())
-	{
-		return value.error();
-	}
-	return static_cast<int32_t>(value.value());
+	return runtime::jni::envs::integerValue(*g_world, object);
 }
 
 } // namespace duckemu::user::jdgs

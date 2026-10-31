@@ -5,6 +5,12 @@
 >
 > 核心原则：**声明即存在**。没写的东西一律不存在；查询不到返回 null 并产生
 > `JniEvent`，不会自动造类/方法/字段，也不会内置任何设备值。
+>
+> **Java 平台方法不是项目代码。** `java.lang.*`、`java.util.*`、`java.security.*`、
+> `javax.*` 这类 JDK 自带的方法（`String`、`HashMap`、`Integer`、证书链……）
+> 一律补在 `src/runtime/jni/envs/`。项目 env 里出现 `java.*`/`javax.*` 的
+> `declareClass`/`declareMethod` 就是放错了位置；下次遇到缺失先补平台包，
+> 不在目标项目里手写。
 
 ---
 
@@ -12,7 +18,7 @@
 
 | 内容 | 位置 | 规则 |
 |---|---|---|
-| 平台级 Java 行为（`java.lang`，以后 `android.os.Build`、`Context`） | `src/runtime/jni/envs/` | 跨目标复用；runtime 不能出现目标名字 |
+| Java 平台方法（`java.*` / `javax.*`：`java.lang.String`、`java.util.HashMap`、`java.lang.Integer`、`java.security.*` 证书链），以及以后的 `android.os.Build`、`Context` | `src/runtime/jni/envs/` | 跨目标复用；缺什么补平台包，项目里不手写；runtime 不出现目标名字 |
 | 目标类、目标专属方法/字段/常量、目标 so 与 runner | `code/user_code/<case>/` | 每个目标一个项目 |
 | 导入符号（libc/libandroid 的 `malloc`/`fopen` 等） | `src/runtime/loader/` | 走 thunk/虚拟模块，**不写进 env** |
 | 测试专用类（如 `env/Fixture`） | `tests/fixtures/envs/` | 测试 main 里显式安装 |
@@ -235,6 +241,9 @@ if (result.ok() && result.value() != 0) {
 ## 6. 硬规则
 
 - 不自动造类/方法/字段；查询不到就是 null + 事件。
+- **Java 平台方法一律进 `src/runtime/jni/envs/`**：`java.*` / `javax.*` 的类与
+  方法（`String`、`HashMap`、`Integer`、`CertificateFactory` 证书链等）属于框架，
+  缺了就补平台包；项目 env 只声明目标类、Android 对象图与设备值。
 - 不内置设备值：包名、型号、证书、时间必须由项目声明。
 - 不编父类、不编方法体、不为了让调用“先过”而返回假对象。
 - runtime 不出现目标名字；项目不写通用框架。
@@ -277,7 +286,7 @@ cmake --build build --target duckemu_libeleven_case
 
 ```text
 jdgs_case/
-├── jdgs_env.hpp/.cpp    # Bridge + 包签名链 + Integer/File；Object[] 参数与结果
+├── jdgs_env.hpp/.cpp    # Bridge + Android 包签名对象图；Object[] 参数与结果
 ├── main.cpp             # init(103) → sign(101) → 解析 [Ljava/lang/Object;
 ├── plugin.hpp/.cpp      # worker 适配，app id jdgs16
 ├── jdgs_cert.h          # 内嵌证书
@@ -285,6 +294,10 @@ jdgs_case/
     ├── libjdg.so
     └── root/.../base.apk   # 精简 APK，经 filesystem_roots 挂载
 ```
+
+`CertificateFactory` / `Certificate.getEncoded` / `Integer` 等 Java 平台部分在
+`src/runtime/jni/envs/`；项目只保留 `Signature.toByteArray` 这类 Android 侧
+入口和内嵌证书字节。
 
 ```bash
 cmake --build build --target duckemu_jdgs_case
@@ -305,6 +318,10 @@ szstone_case/
     ├── lf_in.bin / lf_out.bin
     └── root/              # /proc、build.prop 等设备快照
 ```
+
+`CertificateFactory` / `X509Certificate` / `X500Principal` / `BigInteger` 证书链
+同样来自平台包：项目只给 `Signature.toByteArray` 的 DER 字节，解析和
+`getName()` / `toString(16)` 的渲染由 `src/runtime/jni/envs/` 完成。
 
 ```bash
 cmake --build build --target duckemu_szstone_case

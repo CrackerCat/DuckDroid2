@@ -22,6 +22,12 @@ szstone_case/
     └── root/              # 真机文件快照：proc/、etc/hosts、system|vendor/build.prop
 ```
 
+`szstone_env.cpp` 只声明 `SzSdk`、Android 对象图（ActivityThread /
+Application / PackageManager / PackageInfo / Signature / Settings.Secure）
+和设备值；`CertificateFactory` / `X509Certificate` / `X500Principal` /
+`BigInteger` 证书链在 `src/runtime/jni/envs/`，由平台包解析
+`Signature.toByteArray` 返回的 DER。
+
 ## 运行
 
 ```bash

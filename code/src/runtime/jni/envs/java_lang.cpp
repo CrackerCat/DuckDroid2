@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
+#include <cstdint>
 #include <cstdio>
 #include <string>
 #include <utility>
@@ -279,11 +280,86 @@ Result<void> installSystem(JavaWorld &world)
 		});
 }
 
+// java.lang.Number exists so Integer and BigInteger can name their real
+// superclass instead of inventing one. No methods: nothing calls them.
+Result<void> installNumber(JavaWorld &world)
+{
+	auto declared = world.declareClass("java/lang/Number", "java/lang/Object");
+	if (!declared.ok())
+	{
+		return declared.error();
+	}
+	return {};
+}
+
+// java.lang.Integer carries an int in the field the real class calls `value`.
+// Targets that answer status codes with an Integer only need the constructor;
+// host runners read it back through integerValue() below.
+Result<void> installInteger(JavaWorld &world)
+{
+	auto declared = world.declareClass("java/lang/Integer", "java/lang/Number");
+	if (!declared.ok())
+	{
+		return declared.error();
+	}
+	const uint64_t klass = declared.value();
+
+	auto value = world.declareField(klass, "value", "I", false);
+	if (!value.ok())
+	{
+		return value.error();
+	}
+	const uint64_t value_field = value.value();
+
+	return declare(world, klass, "<init>", "(I)V", false,
+		[value_field](JavaWorld &java, InvokeContext &call) -> Result<uint64_t> {
+			if (call.args.size() != 1)
+			{
+				return Error{ ErrorCode::InvalidArgument,
+					"Integer.<init> expects one int" };
+			}
+			auto written =
+				java.writeInstanceField(call.receiver, value_field, call.args[0]);
+			if (!written.ok())
+			{
+				return written.error();
+			}
+			return uint64_t{ 0 };
+		});
+}
+
 } // namespace
+
+Result<int32_t> integerValue(JavaWorld &world, uint64_t object)
+{
+	const uint64_t klass = world.findClass("java/lang/Integer");
+	const uint64_t field = klass == 0 ? 0 : world.findField(klass, "value", "I", false);
+	if (field == 0)
+	{
+		return Error{ ErrorCode::NotFound, "java/lang/Integer is not installed" };
+	}
+	if (!world.isInstanceOf(object, klass))
+	{
+		return Error{ ErrorCode::InvalidArgument, "the object is not a java.lang.Integer" };
+	}
+	auto value = world.readInstanceField(object, field);
+	if (!value.ok())
+	{
+		return value.error();
+	}
+	return static_cast<int32_t>(value.value());
+}
 
 Result<void> installJavaLang(JavaWorld &world)
 {
-	const auto installers = { installObject, installClass, installString, installSystem };
+	const auto installers = {
+		installObject,
+		installClass,
+		installString,
+		installSystem,
+		installNumber,
+		installInteger,
+	};
 	for (const auto installer : installers)
 	{
 		auto installed = installer(world);

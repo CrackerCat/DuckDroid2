@@ -475,6 +475,11 @@ target_link_libraries(jni_world_test PRIVATE duckemu_runtime duckemu_test_suppor
 add_test(NAME jni_world_test COMMAND jni_world_test)
 duckemu_set_warnings(jni_world_test)
 
+add_executable(jni_platform_env_test unit/runtime/jni_platform_env_test.cpp)
+target_link_libraries(jni_platform_env_test PRIVATE duckemu_runtime duckemu_test_support)
+add_test(NAME jni_platform_env_test COMMAND jni_platform_env_test)
+duckemu_set_warnings(jni_platform_env_test)
+
 add_executable(runtime_clock_test unit/runtime/runtime_clock_test.cpp)
 target_link_libraries(runtime_clock_test PRIVATE duckemu_runtime duckemu_test_support)
 add_test(NAME runtime_clock_test COMMAND runtime_clock_test)

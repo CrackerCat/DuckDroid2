@@ -38,11 +38,6 @@ constexpr const char *kPackageInfo = "android/content/pm/PackageInfo";
 constexpr const char *kSignature = "android/content/pm/Signature";
 constexpr const char *kContentResolver = "android/content/ContentResolver";
 constexpr const char *kSettingsSecure = "android/provider/Settings$Secure";
-constexpr const char *kCertificateFactory = "java/security/cert/CertificateFactory";
-constexpr const char *kX509Certificate = "java/security/cert/X509Certificate";
-constexpr const char *kX500Principal = "javax/security/auth/x500/X500Principal";
-constexpr const char *kBigInteger = "java/math/BigInteger";
-constexpr const char *kByteArrayInputStream = "java/io/ByteArrayInputStream";
 
 // Device values. They are project constants, not framework defaults; each can
 // be overridden for a different profile.
@@ -54,9 +49,6 @@ constexpr const char *kCodePath =
 constexpr const char *kAndroidId = "7a1c2569212074a4";
 // Settings.Secure.getString("bluetooth_address") on the same device.
 constexpr const char *kBluetoothAddress = "A4:50:46:9D:44:1E";
-constexpr const char *kSubjectName =
-	"CN=Jerry Ching,OU=R&D,O=Hupu,L=HongKou,ST=ShangHai,C=CN";
-constexpr const char *kSerialHex = "4fb9d5a8";
 
 JavaWorld *g_world = nullptr;
 uint64_t g_activity_thread = 0;
@@ -65,10 +57,6 @@ uint64_t g_package_manager = 0;
 uint64_t g_package_info = 0;
 uint64_t g_signature = 0;
 uint64_t g_content_resolver = 0;
-uint64_t g_certificate_factory = 0;
-uint64_t g_x509_certificate = 0;
-uint64_t g_x500_principal = 0;
-uint64_t g_big_integer = 0;
 uint64_t g_signature_array = 0;
 uint64_t g_certificate_bytes = 0;
 
@@ -265,11 +253,6 @@ Result<void> installEnvironment(JavaWorld &world)
 	uint64_t signature_class = 0;
 	uint64_t content_resolver_class = 0;
 	uint64_t settings_secure_class = 0;
-	uint64_t certificate_factory_class = 0;
-	uint64_t x509_class = 0;
-	uint64_t x500_class = 0;
-	uint64_t big_integer_class = 0;
-	uint64_t byte_stream_class = 0;
 	struct ClassSlot
 	{
 		const char *descriptor;
@@ -283,11 +266,6 @@ Result<void> installEnvironment(JavaWorld &world)
 		{ kSignature, &signature_class },
 		{ kContentResolver, &content_resolver_class },
 		{ kSettingsSecure, &settings_secure_class },
-		{ kCertificateFactory, &certificate_factory_class },
-		{ kX509Certificate, &x509_class },
-		{ kX500Principal, &x500_class },
-		{ kBigInteger, &big_integer_class },
-		{ kByteArrayInputStream, &byte_stream_class },
 	};
 	for (const ClassSlot &entry : classes)
 	{
@@ -308,10 +286,6 @@ Result<void> installEnvironment(JavaWorld &world)
 		{ package_info_class, &g_package_info },
 		{ signature_class, &g_signature },
 		{ content_resolver_class, &g_content_resolver },
-		{ certificate_factory_class, &g_certificate_factory },
-		{ x509_class, &g_x509_certificate },
-		{ x500_class, &g_x500_principal },
-		{ big_integer_class, &g_big_integer },
 	};
 	for (const Instance &instance : instances)
 	{
@@ -391,45 +365,10 @@ Result<void> installEnvironment(JavaWorld &world)
 						"SZSTONE_BT_ADDRESS", kBluetoothAddress));
 				}
 				return uint64_t{ 0 };
-			})
-		// -- Certificate chain -----------------------------------------
-		.declareMethod(certificate_factory_class, "getInstance",
-			"(Ljava/lang/String;)Ljava/security/cert/CertificateFactory;", true,
-			returnObject("CertificateFactory.getInstance", g_certificate_factory))
-		.declareMethod(certificate_factory_class, "generateCertificate",
-			"(Ljava/io/InputStream;)Ljava/security/cert/Certificate;", false,
-			returnObject("generateCertificate", g_x509_certificate))
-		.declareMethod(byte_stream_class, "<init>", "([B)V", false,
-			[](JavaWorld &, InvokeContext &) -> Result<uint64_t> {
-				if (debugEnabled())
-				{
-					std::fprintf(stderr, "szstone shim ByteArrayInputStream.<init>\n");
-				}
-				return uint64_t{ 0 };
-			})
-		.declareMethod(x509_class, "getSubjectX500Principal",
-			"()Ljavax/security/auth/x500/X500Principal;", false,
-			returnObject("getSubjectX500Principal", g_x500_principal))
-		.declareMethod(x509_class, "getSerialNumber", "()Ljava/math/BigInteger;", false,
-			returnObject("getSerialNumber", g_big_integer))
-		.declareMethod(x500_class, "getName", "()Ljava/lang/String;", false,
-			returnString(kSubjectName))
-		.declareMethod(big_integer_class, "toString", "(I)Ljava/lang/String;", false,
-			[](JavaWorld &java, InvokeContext &call) -> Result<uint64_t> {
-				// The native asks for radix 16; the captured certificate serial is
-				// all this object can ever answer.
-				if (debugEnabled())
-				{
-					std::fprintf(stderr, "szstone shim BigInteger.toString(%llu)\n",
-						static_cast<unsigned long long>(call.args.empty() ? 0 : call.args[0]));
-				}
-				if (call.args.size() != 1 || call.args[0] != 16)
-				{
-					return Error{ ErrorCode::Unsupported,
-						"BigInteger.toString: only radix 16 is declared" };
-				}
-				return java.newString(kSerialHex);
 			});
+	// The rest of the chain (ByteArrayInputStream, CertificateFactory,
+	// X509Certificate/X500Principal/BigInteger) is the platform pack: it
+	// parses the DER that Signature.toByteArray() returns.
 
 	return std::move(binder).done();
 }

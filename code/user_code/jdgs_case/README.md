@@ -8,7 +8,7 @@ Java 环境一致；差别是按 DuckEmu 的写法组织：只声明目标真正
 ```text
 jdgs_case/
 ├── jdgs_env.hpp          # installEnvironment + 参数/结果辅助函数
-├── jdgs_env.cpp          # Bridge、Context、PackageManager、签名链、Integer、File
+├── jdgs_env.cpp          # Bridge、Context/PackageManager 对象图、Signature 证书入口
 ├── main.cpp              # 本地 runner：装环境 → 加载 libc/libjdg → init → sign
 ├── plugin.{hpp,cpp}      # worker 的 AppPlugin 适配（app id: jdgs16）
 ├── jdgs_cert.h           # APK 签名证书（META-INF/JINGDONG.RSA）
@@ -100,13 +100,15 @@ Bridge.main(101, [byte[] request, payload, dfp eid, "1.0", openudid, "83", null]
   `getFilesDir`。
 - `PackageManager.getPackageInfo`、`PackageInfo.versionName`/`versionCode`/
   `signingInfo`/`signatures`、`SigningInfo.getApkContentsSigners`、
-  `Signature.toByteArray`、`CertificateFactory.getInstance`/
-  `generateCertificate`、`Certificate.getEncoded`；证书内容内嵌在
-  `jdgs_cert.h`。
-- `java/lang/Integer.<init>(I)` 用实例字段保存状态；`java/io/File.getAbsolutePath`
-  返回一个绝对路径（当前没有可写 guest home）。
+  `Signature.toByteArray`（Android 侧与证书字节留在项目，内嵌在
+  `jdgs_cert.h`）。
+- `CertificateFactory.getInstance`/`generateCertificate`、`Certificate.getEncoded`、
+  `java.lang.Integer.<init>`、`java.io.ByteArrayInputStream` 等 Java 平台方法在
+  `src/runtime/jni/envs/`；平台包解析 `Signature.toByteArray` 返回的 DER。
+- `Context.getFilesDir` 用平台包创建的 `java.io.File`（`envs::newFile`）回答一个
+  绝对路径（当前没有可写 guest home）。
 - `java.lang.String` 的 `([BLjava/lang/String;)V` 构造器与
-  `getBytes(Ljava/lang/String;)[B` 在平台包里，UTF-8 固定。
+  `getBytes(Ljava/lang/String;)[B` 同样在平台包里，UTF-8 固定。
 
 `FindClass("java/lang/string")` 这种大小写探针不声明即为失败，符合严格模式；
 正常路径只应看到这一条 `missing-class` 事件。

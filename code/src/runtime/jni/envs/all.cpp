@@ -10,7 +10,23 @@ Result<void> installAll(JavaWorld &world)
 {
 	// Platform packs only. Target packs are installed by their project runner
 	// (RuntimeInstance::installJavaEnvironment) and never referenced here.
-	return installJavaLang(world);
+	// Order matters: Number before BigInteger, and the byte stream and
+	// BigInteger classes before the certificate pack reads their fields.
+	constexpr Installer installers[] = {
+		installJavaLang,
+		installJavaIo,
+		installJavaMath,
+		installJavaSecurity,
+	};
+	for (const Installer installer : installers)
+	{
+		auto installed = installer(world);
+		if (!installed.ok())
+		{
+			return installed.error();
+		}
+	}
+	return {};
 }
 
 } // namespace duckemu::runtime::jni::envs
