@@ -62,6 +62,7 @@ file(MAKE_DIRECTORY
   "${DUCKEMU_TAOBAO_CASE_DIR}/assets/root/data/user/0/com.taobao.taobao/files/storage/com.taobao.maindex")
 add_library(duckemu_user_taobao STATIC
   taobao_case/taobao_env.cpp
+  taobao_case/taobao_device.cpp
   taobao_case/taobao_case.cpp
 )
 target_include_directories(duckemu_user_taobao PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")

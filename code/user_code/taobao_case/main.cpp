@@ -148,6 +148,30 @@ class StateRoot
 				}
 			}
 		}
+		// Lock files are runtime artifacts and this runner never lets the SDK
+		// release them (the process is torn down from the host). A stale lock
+		// makes the next run's O_CREAT|O_EXCL see EEXIST, which the SDK reads
+		// as "another process holds it" and retries for minutes. Clear them on
+		// every start, not just the first seed.
+		const std::filesystem::path files = data_dir / "files";
+		for (const auto &entry : std::filesystem::directory_iterator(files, code))
+		{
+			if (entry.path().extension() == ".lock")
+			{
+				std::filesystem::remove(entry.path(), code);
+				code.clear();
+			}
+		}
+		for (const auto &entry :
+			std::filesystem::directory_iterator(data_dir / "app_SGLib", code))
+		{
+			if (entry.is_directory() && entry.path().filename().string().rfind("app_", 0) == 0)
+			{
+				std::filesystem::remove(entry.path() / "lock.lock", code);
+				code.clear();
+			}
+		}
+		code.clear();
 		const std::filesystem::path directories[] = {
 			data_dir / "files/storage/com.taobao.maindex",
 		};

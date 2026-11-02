@@ -15,9 +15,12 @@ namespace duckemu::user::taobao
 {
 
 // The SecurityGuard init chain captured from the reference device:
-//   10102 -> 10101 -> 10103 -> 10104 -> 10107
+//   10102 -> 10101 -> 10103 -> 10104
 // Command ids and argument values come from logs/hook_a.log; the old case
 // proved each one and the three values the decompiled-source guess got wrong.
+// 10107 (no arguments, returns a Long) is not part of init: its value only
+// feeds a Java-side nativeSetOsmssFunctionBridge registration that the host
+// runner does not perform.
 Result<void> init(runtime::RuntimeInstance &instance);
 
 // Stage isolation for diagnosis: 10102 alone (the plugin registration). The

@@ -201,7 +201,9 @@ Result<void> init(runtime::RuntimeInstance &instance)
 	}
 
 	// 10103 / 10104: "plugin loaded" notifications. Both return null on the
-	// reference device and the Java side ignores the value.
+	// reference device and the Java side ignores the value. 10103 is what
+	// starts the security-body device collectors, so the host waits here until
+	// those threads have resolved their Java surface.
 	for (const int32_t command : { 10103, 10104 })
 	{
 		std::fprintf(stderr, "call %d...\n", command);
@@ -212,15 +214,12 @@ Result<void> init(runtime::RuntimeInstance &instance)
 		}
 	}
 
-	// 10107: the instance handle. The device answers a Long; the Java side
-	// only records it, so the value itself is not an input to signing.
-	std::fprintf(stderr, "call 10107...\n");
-	auto handle = callCommand(instance, 10107, {});
-	if (!handle.ok())
-	{
-		return handle.error();
-	}
-	std::fprintf(stderr, "10107 done\n");
+	// 10107 is deliberately not called. It takes no arguments and answers a
+	// Long (476930838696 on the reference device), which the Java plugin feeds
+	// only to SecurityGuardManager.nativeSetOsmssFunctionBridge; nothing on the
+	// signing path reads it. Its native path is also the one that reaches
+	// exit_group in this environment, and the host runner has no Java bridge to
+	// install. callCommand(instance, 10107, {}) remains available for a probe.
 	return {};
 }
 

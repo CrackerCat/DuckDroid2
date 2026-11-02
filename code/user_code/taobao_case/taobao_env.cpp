@@ -10,6 +10,7 @@
 #include "runtime/jni/envs/envs.hpp"
 #include "runtime/jni/world/java_binder.hpp"
 #include "runtime/jni/world/java_world.hpp"
+#include "taobao_case/taobao_device.hpp"
 
 namespace duckemu::user::taobao
 {
@@ -49,6 +50,7 @@ uint64_t g_package_manager_class = 0;
 uint64_t g_package_info_class = 0;
 uint64_t g_package_info_version = 0;
 uint64_t g_package_info_package = 0;
+uint64_t g_package_info_application_info = 0;
 uint64_t g_integer_class = 0;
 uint64_t g_integer_value_field = 0;
 uint64_t g_boolean_class = 0;
@@ -293,6 +295,20 @@ Result<uint64_t> makePackageInfo(JavaWorld &world)
 	if (!package.ok())
 	{
 		return package.error();
+	}
+	// Device collectors reach the package's ApplicationInfo through
+	// PackageInfo.applicationInfo; fill the same object graph Context hands
+	// out instead of leaving the field null.
+	auto application = makeApplicationInfo(world);
+	if (!application.ok())
+	{
+		return application.error();
+	}
+	auto written = world.writeInstanceField(object.value(),
+		g_package_info_application_info, application.value());
+	if (!written.ok())
+	{
+		return written.error();
 	}
 	return object.value();
 }
@@ -858,6 +874,13 @@ Result<void> installEnvironment(JavaWorld &world)
 	}
 	g_package_info_version = version_field.value();
 	g_package_info_package = package_field.value();
+	auto application_field = world.declareField(package_info, "applicationInfo",
+		"Landroid/content/pm/ApplicationInfo;", false);
+	if (!application_field.ok())
+	{
+		return application_field.error();
+	}
+	g_package_info_application_info = application_field.value();
 	for (const char *name : { "getPackageInfo", "getPackageArchiveInfo" })
 	{
 		const auto declared = declare(world, package_manager, name,
@@ -1019,6 +1042,13 @@ Result<void> installEnvironment(JavaWorld &world)
 	if (!done.ok())
 	{
 		return done;
+	}
+	// 10103/10104 start SecurityGuard's device collectors; their surface lives
+	// in its own file and only touches Android classes, never SDK logic.
+	auto device = installDeviceEnvironment(world);
+	if (!device.ok())
+	{
+		return device;
 	}
 	g_world = &world;
 	return {};
