@@ -223,4 +223,69 @@ Result<void> init(runtime::RuntimeInstance &instance)
 	return {};
 }
 
+Result<void> sign70102(runtime::RuntimeInstance &instance)
+{
+	// The twelve arguments captured from the reference device for
+	// mtop.taobao.afc.reductionandlogin (logs/hook_a.log). Slots 6..8 are the
+	// optional payload/header/query objects and are null in the capture.
+	auto app_key = makeString("21646297");
+	auto payload = makeString(
+		"at88wsLQ2wUDACdd6tSLBrZ7&&&21646297&dc12c7d463b320afea741d402d1e5cf4&"
+		"1793014979&mtop.taobao.afc.reductionandlogin&1.0&&"
+		"231200@taobao_android_10.68.0&&&&openappkey=DEFAULT_AUTH&27&&&&&&&");
+	auto flag = makeBooleanBox(false);
+	auto zero_a = boxInt(0);
+	auto api = makeString("mtop.taobao.afc.reductionandlogin");
+	auto page = makeString("pageId=&pageName=com.taobao.tao.welcome.Welcome");
+	auto request_id = makeString("r_2");
+	auto zero_b = boxInt(0);
+	auto zero_c = boxInt(0);
+	for (const auto *result : { &app_key, &payload, &flag, &zero_a, &api, &page,
+		     &request_id, &zero_b, &zero_c })
+	{
+		if (!result->ok())
+		{
+			return result->error();
+		}
+	}
+	const std::vector<uint64_t> arguments = {
+		app_key.value(),
+		payload.value(),
+		flag.value(),
+		zero_a.value(),
+		api.value(),
+		page.value(),
+		0,
+		0,
+		0,
+		request_id.value(),
+		zero_b.value(),
+		zero_c.value(),
+	};
+
+	std::fprintf(stderr, "call 70102...\n");
+	auto signed_headers = callCommand(instance, 70102, arguments);
+	if (!signed_headers.ok())
+	{
+		return signed_headers.error();
+	}
+	if (signed_headers.value() == 0)
+	{
+		return Error{ ErrorCode::Internal, "70102 returned null" };
+	}
+	auto descriptor = classDescriptorOf(signed_headers.value());
+	if (!descriptor.ok())
+	{
+		return descriptor.error();
+	}
+	auto text = mapToString(signed_headers.value());
+	if (!text.ok())
+	{
+		return text.error();
+	}
+	std::fprintf(stderr, "70102 -> %s\n", descriptor.value().c_str());
+	std::fprintf(stderr, "70102 headers: %s\n", text.value().c_str());
+	return {};
+}
+
 } // namespace duckemu::user::taobao

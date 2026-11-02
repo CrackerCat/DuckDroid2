@@ -43,4 +43,10 @@ Result<std::string> readJavaString(uint64_t object);
 Result<int32_t> readIntegerValue(uint64_t object);
 Result<bool> readBooleanValue(uint64_t object);
 
+// Host-side view of an object the guest returned: its class descriptor, and
+// (for a java.util.Map) the same text Map.toString() renders. These call the
+// installed shims directly; they are runner diagnostics, not guest calls.
+Result<std::string> classDescriptorOf(uint64_t object);
+Result<std::string> mapToString(uint64_t object);
+
 } // namespace duckemu::user::taobao

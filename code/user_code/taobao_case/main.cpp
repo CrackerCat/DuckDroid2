@@ -308,7 +308,9 @@ int main(int argc, char **argv)
 			run_init = true;
 			continue;
 		}
-		std::fprintf(stderr, "usage: %s [--init] [--jni-events] [--trace DIR] [--stage 10102]\n",
+		std::fprintf(stderr,
+			"usage: %s [--init] [--jni-events] [--trace DIR] "
+			"[--stage 10102|10101|70102]\n",
 			argv[0]);
 		return 2;
 	}
@@ -344,6 +346,13 @@ int main(int argc, char **argv)
 	config.property_file = DUCKEMU_TAOBAO_PROPERTIES;
 	config.trace_path = trace_path.empty() ? std::string{} : trace_path + "/svc.log";
 	config.default_timeout_us = kCallTimeoutUs;
+	// Pinning entropy is what makes a signing run reproducible: the SDK mixes
+	// getrandom()/dev/urandom into the headers. TAOBAO_RANDOM_SEED=0 is a valid
+	// seed; only an unset variable keeps host entropy.
+	if (const char *seed = std::getenv("TAOBAO_RANDOM_SEED"))
+	{
+		config.random_seed = std::strtoull(seed, nullptr, 0);
+	}
 
 	auto created = RuntimeInstance::create(config);
 	if (!created.ok())
@@ -404,12 +413,27 @@ int main(int argc, char **argv)
 	if (run_init)
 	{
 		std::fprintf(stderr, "--- init ---\n");
-		const auto result = stage == "10102" ? taobao::init10102(instance) :
-				     stage == "10101" ? taobao::init10101(instance) :
-						       taobao::init(instance);
+		Result<void> result;
+		if (stage == "70102")
+		{
+			// 70102 is the mtop signing entry, so the init chain runs first.
+			result = taobao::init(instance);
+			if (result.ok())
+			{
+				result = taobao::sign70102(instance);
+			}
+		}
+		else
+		{
+			result = stage == "10102" ? taobao::init10102(instance) :
+				 stage == "10101" ? taobao::init10101(instance) :
+						   taobao::init(instance);
+		}
 		if (!result.ok())
 		{
-			std::fprintf(stderr, "init failed: %s\n", result.error().message.c_str());
+			std::fprintf(stderr, "%s failed: %s\n",
+				stage.empty() ? "init" : stage.c_str(),
+				result.error().message.c_str());
 			return 1;
 		}
 		std::printf("%s ok\n", stage.empty() ? "init" : stage.c_str());

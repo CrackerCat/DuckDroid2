@@ -37,4 +37,11 @@ Result<uint64_t> callCommand(runtime::RuntimeInstance &instance,
 	int32_t command,
 	const std::vector<uint64_t> &elements);
 
+// The mtop signing entry: doCommand(70102), called after init(). The twelve
+// arguments are the reference-device capture for
+// mtop.taobao.afc.reductionandlogin (logs/hook_a.log). The answer is a
+// java.util.HashMap carrying x-sign / x-mini-wua / x-sgext / x-gst / x-umt;
+// the stage prints its class and Map.toString().
+Result<void> sign70102(runtime::RuntimeInstance &instance);
+
 } // namespace duckemu::user::taobao

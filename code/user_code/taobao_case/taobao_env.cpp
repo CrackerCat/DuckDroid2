@@ -1179,4 +1179,60 @@ Result<bool> readBooleanValue(uint64_t object)
 	return runtime::jni::envs::booleanValue(*g_world, object);
 }
 
+Result<std::string> classDescriptorOf(uint64_t object)
+{
+	if (g_world == nullptr)
+	{
+		return Error{ ErrorCode::InvalidArgument, "taobao: environment is not installed" };
+	}
+	if (object == 0)
+	{
+		return std::string{ "<null>" };
+	}
+	const uint64_t klass = g_world->classOf(object);
+	if (klass == 0)
+	{
+		return std::string{ "<unknown>" };
+	}
+	return std::string(g_world->descriptorOfClass(klass));
+}
+
+Result<std::string> mapToString(uint64_t object)
+{
+	if (g_world == nullptr)
+	{
+		return Error{ ErrorCode::InvalidArgument, "taobao: environment is not installed" };
+	}
+	if (object == 0)
+	{
+		return std::string{ "<null>" };
+	}
+	const uint64_t map_class = g_world->findClass("java/util/Map");
+	if (map_class == 0)
+	{
+		return Error{ ErrorCode::NotFound, "java/util/Map is not installed" };
+	}
+	// The SDK builds a HashMap and the map shims are declared on both Map and
+	// HashMap; resolving on Map is enough because findMethod walks the class.
+	const uint64_t method_id =
+		g_world->findMethod(map_class, "toString", "()Ljava/lang/String;", false);
+	const runtime::jni::MethodRecord *record = g_world->method(method_id);
+	if (record == nullptr || !record->shim)
+	{
+		return Error{ ErrorCode::NotFound, "java/util/Map.toString has no implementation" };
+	}
+	runtime::jni::InvokeContext call;
+	call.receiver = object;
+	auto text = record->shim(*g_world, call);
+	if (!text.ok())
+	{
+		return text.error();
+	}
+	if (text.value() == 0)
+	{
+		return std::string{};
+	}
+	return g_world->stringUtf8(text.value());
+}
+
 } // namespace duckemu::user::taobao
