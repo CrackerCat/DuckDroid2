@@ -10,6 +10,7 @@
 #include "runtime/jni/envs/envs.hpp"
 #include "runtime/jni/world/java_binder.hpp"
 #include "runtime/jni/world/java_world.hpp"
+#include "taobao_case/taobao_case.hpp"
 #include "taobao_case/taobao_device.hpp"
 
 namespace duckemu::user::taobao
@@ -787,7 +788,7 @@ Result<void> installEnvironment(JavaWorld &world)
 				return uint64_t{ 0 };
 			}
 			auto name = java.stringUtf8(call.args[0]);
-			if (name.ok())
+			if (name.ok() && verbose())
 			{
 				static std::set<std::string> seen;
 				if (seen.insert(name.value()).second)

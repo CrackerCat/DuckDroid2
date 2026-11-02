@@ -6,9 +6,12 @@
 // failures the protected library would otherwise swallow. Everything the old
 // DuckDroid case learned is in code/user_code/TaoBao/.
 //
-//   ./duckemu_taobao_case --jni-events
-//   ./duckemu_taobao_case --init --jni-events
-//   ./duckemu_taobao_case --trace DIR
+//   ./duckemu_taobao_case                      # init + 70102, prints the header map
+//   ./duckemu_taobao_case --stage 70102        # same
+//   ./duckemu_taobao_case --init --jni-events  # init diagnostics
+//   ./duckemu_taobao_case --trace DIR          # same signing run, with an insn trace
+//
+// TAOBAO_VERBOSE=1 restores the progress lines on a signing run.
 //
 // The APK at assets/root/data/app/.../base.apk is not tracked by git; CMake
 // tells the operator where to link/copy it from.
@@ -309,11 +312,25 @@ int main(int argc, char **argv)
 			continue;
 		}
 		std::fprintf(stderr,
-			"usage: %s [--init] [--jni-events] [--trace DIR] "
-			"[--stage 10102|10101|70102]\n",
+			"usage: %s [--trace DIR] [--jni-events] [--init] "
+			"[--stage 10102|10101|70102]\n"
+			"       (no arguments: run init and print the default 70102 "
+			"signature result)\n",
 			argv[0]);
 		return 2;
 	}
+
+	// With no request for a diagnostic stage, the default action is a plain
+	// signing run. Progress lines are a debug aid: --init and the two init
+	// stages keep them, 70102 prints only the final header map, and
+	// TAOBAO_VERBOSE=1 restores them anywhere.
+	const bool env_verbose = std::getenv("TAOBAO_VERBOSE") != nullptr;
+	if (!run_init)
+	{
+		stage = "70102";
+	}
+	const bool verbose = env_verbose || (run_init && stage != "70102");
+	taobao::setVerbose(verbose);
 
 	if (!trace_path.empty())
 	{
@@ -406,74 +423,90 @@ int main(int argc, char **argv)
 		std::fprintf(stderr, "module range failed: %s\n", range.error().message.c_str());
 		return 1;
 	}
-	std::printf("module base=0x%llx span=0x%llx\n",
-		static_cast<unsigned long long>(range.value().base.value()),
-		static_cast<unsigned long long>(range.value().span));
+	if (verbose)
+	{
+		std::printf("module base=0x%llx span=0x%llx\n",
+			static_cast<unsigned long long>(range.value().base.value()),
+			static_cast<unsigned long long>(range.value().span));
+	}
 
-	if (run_init)
+	if (verbose)
 	{
 		std::fprintf(stderr, "--- init ---\n");
-		Result<void> result;
-		if (stage == "70102")
+	}
+	Result<void> result;
+	if (stage == "70102")
+	{
+		// 70102 is the mtop signing entry, so the init chain runs first.
+		result = taobao::init(instance);
+		bool tracing = false;
+		if (result.ok() && !trace_path.empty())
 		{
-			// 70102 is the mtop signing entry, so the init chain runs first.
-			result = taobao::init(instance);
-			bool tracing = false;
-			if (result.ok() && !trace_path.empty())
+			// Trace only this call: init() has already run and its
+			// background guest threads are alive, so arm on the registered
+			// native's entry instead of the first in-range instruction.
+			auto entry = instance.lookupRegisteredNative(taobao::kNativeClass,
+				taobao::kNativeMethod,
+				taobao::kNativeSignature);
+			if (!entry.ok())
 			{
-				// Trace only this call: init() has already run and its
-				// background guest threads are alive, so arm on the registered
-				// native's entry instead of the first in-range instruction.
-				auto entry = instance.lookupRegisteredNative(taobao::kNativeClass,
-					taobao::kNativeMethod,
-					taobao::kNativeSignature);
-				if (!entry.ok())
+				result = entry.error();
+			}
+			else
+			{
+				std::fprintf(stderr, "70102 entry=0x%llx\n",
+					static_cast<unsigned long long>(entry.value().value()));
+				observer::InsnTraceOptions options;
+				options.directory = trace_path + "/insn";
+				options.begin = range.value().base;
+				options.size = range.value().span;
+				options.stop_at_return = true;
+				options.arm_address = entry.value();
+				auto started = instance.startInsnTrace(options);
+				if (!started.ok())
 				{
-					result = entry.error();
+					result = started.error();
 				}
 				else
 				{
-					std::fprintf(stderr, "70102 entry=0x%llx\n",
-						static_cast<unsigned long long>(entry.value().value()));
-					observer::InsnTraceOptions options;
-					options.directory = trace_path + "/insn";
-					options.begin = range.value().base;
-					options.size = range.value().span;
-					options.stop_at_return = true;
-					options.arm_address = entry.value();
-					auto started = instance.startInsnTrace(options);
-					if (!started.ok())
-					{
-						result = started.error();
-					}
-					else
-					{
-						tracing = true;
-					}
+					tracing = true;
 				}
 			}
-			if (result.ok())
-			{
-				result = taobao::sign70102(instance);
-			}
-			if (tracing)
-			{
-				instance.stopInsnTrace();
-			}
 		}
-		else
+		if (result.ok())
 		{
-			result = stage == "10102" ? taobao::init10102(instance) :
-				 stage == "10101" ? taobao::init10101(instance) :
-						   taobao::init(instance);
+			// The one line a signing run prints: the header map the SDK
+			// returned (x-sign / x-mini-wua / x-sgext / x-gst / x-umt).
+			auto headers = taobao::sign70102(instance);
+			if (headers.ok())
+			{
+				std::printf("%s\n", headers.value().c_str());
+			}
+			else
+			{
+				result = headers.error();
+			}
 		}
-		if (!result.ok())
+		if (tracing)
 		{
-			std::fprintf(stderr, "%s failed: %s\n",
-				stage.empty() ? "init" : stage.c_str(),
-				result.error().message.c_str());
-			return 1;
+			instance.stopInsnTrace();
 		}
+	}
+	else
+	{
+		result = stage == "10102" ? taobao::init10102(instance) :
+			 stage == "10101" ? taobao::init10101(instance) :
+					   taobao::init(instance);
+	}
+	if (!result.ok())
+	{
+		std::fprintf(stderr, "%s failed: %s\n",
+			stage.empty() ? "init" : stage.c_str(),
+			result.error().message.c_str());
+		return 1;
+	}
+	if (verbose)
+	{
 		std::printf("%s ok\n", stage.empty() ? "init" : stage.c_str());
 	}
 

@@ -15,6 +15,8 @@ namespace duckemu::user::taobao
 namespace
 {
 
+bool g_verbose = false;
+
 // Device values captured from the reference phone (logs/hook_a.log).
 constexpr const char *kVersionName = "10.68.0";
 constexpr const char *kOsRelease = "12";
@@ -66,6 +68,16 @@ Result<int32_t> callIntCommand(runtime::RuntimeInstance &instance,
 
 } // namespace
 
+void setVerbose(bool enabled)
+{
+	g_verbose = enabled;
+}
+
+bool verbose()
+{
+	return g_verbose;
+}
+
 Result<uint64_t> callCommand(runtime::RuntimeInstance &instance,
 	int32_t command,
 	const std::vector<uint64_t> &elements)
@@ -110,7 +122,10 @@ Result<void> init10102(runtime::RuntimeInstance &instance)
 	{
 		return values.error();
 	}
-	std::fprintf(stderr, "call 10102...\n");
+	if (verbose())
+	{
+		std::fprintf(stderr, "call 10102...\n");
+	}
 	auto called = callIntCommand(instance, 10102, values.value());
 	if (!called.ok())
 	{
@@ -121,7 +136,10 @@ Result<void> init10102(runtime::RuntimeInstance &instance)
 		return Error{ ErrorCode::Internal,
 			"10102 returned " + std::to_string(called.value()) };
 	}
-	std::fprintf(stderr, "10102 -> 0\n");
+	if (verbose())
+	{
+		std::fprintf(stderr, "10102 -> 0\n");
+	}
 }
 
 	return {};
@@ -176,7 +194,10 @@ Result<void> init10101(runtime::RuntimeInstance &instance)
 		m24.value(),
 		plugin.value(),
 	};
-	std::fprintf(stderr, "call 10101...\n");
+	if (verbose())
+	{
+		std::fprintf(stderr, "call 10101...\n");
+	}
 	auto status = callIntCommand(instance, 10101, arguments);
 	if (!status.ok())
 	{
@@ -188,7 +209,10 @@ Result<void> init10101(runtime::RuntimeInstance &instance)
 			"10101 returned " + std::to_string(status.value()) +
 				" (the Java side would throw SecException)" };
 	}
-	std::fprintf(stderr, "10101 -> 0\n");
+	if (verbose())
+	{
+		std::fprintf(stderr, "10101 -> 0\n");
+	}
 	return {};
 }
 
@@ -206,7 +230,10 @@ Result<void> init(runtime::RuntimeInstance &instance)
 	// those threads have resolved their Java surface.
 	for (const int32_t command : { 10103, 10104 })
 	{
-		std::fprintf(stderr, "call %d...\n", command);
+		if (verbose())
+		{
+			std::fprintf(stderr, "call %d...\n", command);
+		}
 		auto ignored = callCommand(instance, command, {});
 		if (!ignored.ok())
 		{
@@ -223,7 +250,7 @@ Result<void> init(runtime::RuntimeInstance &instance)
 	return {};
 }
 
-Result<void> sign70102(runtime::RuntimeInstance &instance)
+Result<std::string> sign70102(runtime::RuntimeInstance &instance)
 {
 	// The twelve arguments captured from the reference device for
 	// mtop.taobao.afc.reductionandlogin (logs/hook_a.log). Slots 6..8 are the
@@ -263,7 +290,10 @@ Result<void> sign70102(runtime::RuntimeInstance &instance)
 		zero_c.value(),
 	};
 
-	std::fprintf(stderr, "call 70102...\n");
+	if (verbose())
+	{
+		std::fprintf(stderr, "call 70102...\n");
+	}
 	auto signed_headers = callCommand(instance, 70102, arguments);
 	if (!signed_headers.ok())
 	{
@@ -273,19 +303,15 @@ Result<void> sign70102(runtime::RuntimeInstance &instance)
 	{
 		return Error{ ErrorCode::Internal, "70102 returned null" };
 	}
-	auto descriptor = classDescriptorOf(signed_headers.value());
-	if (!descriptor.ok())
+	if (verbose())
 	{
-		return descriptor.error();
+		auto descriptor = classDescriptorOf(signed_headers.value());
+		if (descriptor.ok())
+		{
+			std::fprintf(stderr, "70102 -> %s\n", descriptor.value().c_str());
+		}
 	}
-	auto text = mapToString(signed_headers.value());
-	if (!text.ok())
-	{
-		return text.error();
-	}
-	std::fprintf(stderr, "70102 -> %s\n", descriptor.value().c_str());
-	std::fprintf(stderr, "70102 headers: %s\n", text.value().c_str());
-	return {};
+	return mapToString(signed_headers.value());
 }
 
 } // namespace duckemu::user::taobao

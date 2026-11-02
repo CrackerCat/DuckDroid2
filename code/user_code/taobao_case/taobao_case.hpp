@@ -41,7 +41,13 @@ Result<uint64_t> callCommand(runtime::RuntimeInstance &instance,
 // arguments are the reference-device capture for
 // mtop.taobao.afc.reductionandlogin (logs/hook_a.log). The answer is a
 // java.util.HashMap carrying x-sign / x-mini-wua / x-sgext / x-gst / x-umt;
-// the stage prints its class and Map.toString().
-Result<void> sign70102(runtime::RuntimeInstance &instance);
+// sign70102 returns its Map.toString() text.
+Result<std::string> sign70102(runtime::RuntimeInstance &instance);
+
+// Progress lines ("call 10102...", the 70102 class) go to stderr only while
+// verbose. The runner turns this off for a plain signing run, whose only
+// output is the final header map.
+void setVerbose(bool enabled);
+bool verbose();
 
 } // namespace duckemu::user::taobao
