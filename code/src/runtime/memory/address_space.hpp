@@ -57,6 +57,10 @@ class RuntimeMemory
 
 	[[nodiscard]] bool isMapped(GuestVA address) const;
 	[[nodiscard]] bool isExecutable(GuestVA address) const;
+	// True while any region is both writable and executable. Only then can
+	// guest stores rewrite live code, so the backend can keep its per-store
+	// SMC hook off the common (r-x / rw-) paths.
+	[[nodiscard]] bool hasWritableExecutable() const;
 	[[nodiscard]] uint32_t permissionsAt(GuestVA address) const;
 	[[nodiscard]] std::optional<Region> regionAt(GuestVA address) const;
 

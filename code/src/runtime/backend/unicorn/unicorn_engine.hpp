@@ -58,6 +58,12 @@ class UnicornEngine
 	// expected to invalidate translated code in every engine of the instance.
 	void setCodeWriteSink(CodeWriteSink sink);
 
+	// UC_HOOK_MEM_WRITE for guest-side SMC detection. Idempotent. Installed by
+	// UnicornBackend only while a W+X region exists: the hook adds a host
+	// callback to every store, which is pure overhead for guests that never
+	// self-modify.
+	Result<void> installMemWriteHook();
+
 	// Called after every uc_emu_start returns, before the caller inspects the
 	// engine. The trace uses it to flush the last instruction's POST values.
 	void setRunEndSink(RunEndSink sink);

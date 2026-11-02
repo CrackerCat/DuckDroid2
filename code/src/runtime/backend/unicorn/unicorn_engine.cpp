@@ -89,18 +89,6 @@ Result<std::unique_ptr<UnicornEngine> > UnicornEngine::create()
 		return unicornError(intr_err, "uc_hook_add(UC_HOOK_INTR)");
 	}
 
-	const uc_err write_err = uc_hook_add(engine,
-		&self->mem_write_hook_,
-		UC_HOOK_MEM_WRITE,
-		reinterpret_cast<void *>(&UnicornEngine::onMemWrite),
-		self.get(),
-		1,
-		0);
-	if (write_err != UC_ERR_OK)
-	{
-		return unicornError(write_err, "uc_hook_add(UC_HOOK_MEM_WRITE)");
-	}
-
 	const uc_err unmapped_err = uc_hook_add(engine,
 		&self->unmapped_hook_,
 		UC_HOOK_MEM_READ_UNMAPPED | UC_HOOK_MEM_WRITE_UNMAPPED | UC_HOOK_MEM_FETCH_UNMAPPED,
@@ -188,6 +176,29 @@ void UnicornEngine::setDiagnosticSink(DiagnosticSink sink)
 void UnicornEngine::setCodeWriteSink(CodeWriteSink sink)
 {
 	code_write_sink_ = std::move(sink);
+}
+
+Result<void> UnicornEngine::installMemWriteHook()
+{
+	// Every guest store pays a host callback, so this hook is installed only
+	// while the address space has W+X memory (the only case where a store can
+	// rewrite translated code). See RuntimeMemory::hasWritableExecutable.
+	if (mem_write_hook_ != 0)
+	{
+		return {};
+	}
+	const uc_err err = uc_hook_add(engine_,
+		&mem_write_hook_,
+		UC_HOOK_MEM_WRITE,
+		reinterpret_cast<void *>(&UnicornEngine::onMemWrite),
+		this,
+		1,
+		0);
+	if (err != UC_ERR_OK)
+	{
+		return unicornError(err, "uc_hook_add(UC_HOOK_MEM_WRITE)");
+	}
+	return {};
 }
 
 void UnicornEngine::setRunEndSink(RunEndSink sink)

@@ -473,6 +473,19 @@ bool RuntimeMemory::isExecutable(GuestVA address) const
 	return (permissionsAt(address) & PermExec) != 0;
 }
 
+bool RuntimeMemory::hasWritableExecutable() const
+{
+	for (const auto &entry : regions_)
+	{
+		const uint32_t perms = entry.second.perms;
+		if ((perms & (PermWrite | PermExec)) == (PermWrite | PermExec))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
 std::optional<Region> RuntimeMemory::regionAt(GuestVA address) const
 {
 	auto it = findRegion(address.value());

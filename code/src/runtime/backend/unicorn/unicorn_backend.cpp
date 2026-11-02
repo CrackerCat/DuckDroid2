@@ -129,6 +129,10 @@ void UnicornBackend::destroyEngine(UnicornEngine *engine)
 
 Result<void> UnicornBackend::onMapped(const Region &region)
 {
+	if ((region.perms & PermWrite) != 0 && (region.perms & PermExec) != 0)
+	{
+		hook_rebuild_pending_.store(true, std::memory_order_relaxed);
+	}
 	std::lock_guard<std::mutex> lock(mutex_);
 	std::optional<Error> failed;
 	for (UnicornEngine *engine : engines_)
@@ -167,6 +171,10 @@ Result<void> UnicornBackend::onUnmapped(GuestVA address, uint64_t size)
 
 Result<void> UnicornBackend::onProtected(GuestVA address, uint64_t size, uint32_t perms)
 {
+	if ((perms & PermWrite) != 0 && (perms & PermExec) != 0)
+	{
+		hook_rebuild_pending_.store(true, std::memory_order_relaxed);
+	}
 	std::lock_guard<std::mutex> lock(mutex_);
 	std::optional<Error> failed;
 	for (UnicornEngine *engine : engines_)
@@ -296,6 +304,19 @@ Result<void> UnicornBackend::installEngineHooks(EngineState &state)
 			return hook.error();
 		}
 		state.address_hooks[id] = hook.value();
+	}
+
+	// Guest stores can only rewrite live code when a page is both writable and
+	// executable. Keeping the per-store hook off otherwise avoids putting a
+	// QEMU helper call on every store for guests that never self-modify.
+	if (memory_.hasWritableExecutable())
+	{
+		auto write_hook = state.engine->installMemWriteHook();
+		if (!write_hook.ok())
+		{
+			removeEngineHooks(state);
+			return write_hook.error();
+		}
 	}
 	return {};
 }
@@ -575,6 +596,18 @@ void UnicornBackend::dispatchRunEnd(EngineState &state, uc_engine *uc)
 	if (trace_sink_)
 	{
 		trace_sink_->onRunEnd(uc, state.id);
+	}
+	// A guest syscall may have created W+X memory; install the SMC write hook
+	// now that uc_emu_start has returned (adding hooks mid-run is not safe).
+	if (hook_rebuild_pending_.load(std::memory_order_relaxed))
+	{
+		hook_rebuild_pending_.store(false, std::memory_order_relaxed);
+		auto rebuilt = rebuildEngineHooks();
+		if (!rebuilt.ok())
+		{
+			DUCKEMU_WARN("cannot install the SMC write hook: %s",
+				rebuilt.error().message.c_str());
+		}
 	}
 }
 

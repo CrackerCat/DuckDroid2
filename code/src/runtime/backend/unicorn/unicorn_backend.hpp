@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -126,6 +127,10 @@ class UnicornBackend final : public MapObserver, public CodeWriteNotifier
 	bool trace_active_ = false;
 	uint32_t next_hook_id_ = 1;
 	uint64_t next_engine_id_ = 1;
+	// Set when a mapping/protection makes W+X memory appear; the SMC write
+	// hook is installed at the next uc_emu_start return, where it is safe to
+	// add hooks (onMapped/onProtected run inside a guest syscall).
+	std::atomic<bool> hook_rebuild_pending_{ false };
 };
 
 } // namespace duckemu::runtime
