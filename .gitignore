@@ -23,3 +23,6 @@ code/tests/guest_so/out/
 
 # 分析 trace 输出（各 runner 的 --trace DIR）
 trace_logs/
+
+# Taobao persistent app state (extracted from the APK at runtime)
+code/user_code/taobao_case/state/

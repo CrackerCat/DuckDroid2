@@ -50,6 +50,40 @@ target_include_directories(duckemu_user_dy7 PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}"
 target_link_libraries(duckemu_user_dy7 PRIVATE duckemu_runtime)
 duckemu_set_warnings(duckemu_user_dy7)
 
+# TaoBao 10.68.0: libsgmainso (SecurityGuard) 6.8.260901. The AVMP-protected
+# .so, the device snapshot and the (untracked) APK live in this project's
+# assets/; every piece was carried over from the old DuckDroid case.
+set(DUCKEMU_TAOBAO_CASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/taobao_case")
+# SecurityGuard opens the app's dexopt directory before it does anything else;
+# an empty directory is enough (opendir must not answer NULL, because the SDK
+# then calls readdir and bionic's FORTIFY check aborts). Empty directories are
+# not tracked by git, so the build creates it.
+file(MAKE_DIRECTORY
+  "${DUCKEMU_TAOBAO_CASE_DIR}/assets/root/data/user/0/com.taobao.taobao/files/storage/com.taobao.maindex")
+add_library(duckemu_user_taobao STATIC
+  taobao_case/taobao_env.cpp
+  taobao_case/taobao_case.cpp
+)
+target_include_directories(duckemu_user_taobao PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(duckemu_user_taobao PRIVATE duckemu_runtime)
+duckemu_set_warnings(duckemu_user_taobao)
+
+add_executable(duckemu_taobao_case
+  taobao_case/main.cpp
+)
+target_link_libraries(duckemu_taobao_case PRIVATE
+  duckemu_runtime
+  duckemu_user_taobao)
+target_compile_definitions(duckemu_taobao_case PRIVATE
+  DUCKEMU_ROM_BOOTSTRAP="${DUCKEMU_ROM_BOOTSTRAP}"
+  DUCKEMU_ROM_LIB64="${DUCKEMU_ROM_LIB64}"
+  DUCKEMU_TAOBAO_SO="${DUCKEMU_TAOBAO_CASE_DIR}/assets/libsgmainso-6.8.260901.so"
+  DUCKEMU_TAOBAO_ROOT="${DUCKEMU_TAOBAO_CASE_DIR}/assets/root"
+  DUCKEMU_TAOBAO_SEED="${DUCKEMU_TAOBAO_CASE_DIR}/assets/seed"
+  DUCKEMU_TAOBAO_STATE="${DUCKEMU_TAOBAO_CASE_DIR}/state"
+  DUCKEMU_TAOBAO_PROPERTIES="${DUCKEMU_TAOBAO_CASE_DIR}/taobao.properties")
+duckemu_set_warnings(duckemu_taobao_case)
+
 # M7: every project also implements the worker's AppPlugin seam. The registry
 # is the only place app ids are named on this side of the boundary.
 add_library(duckemu_user_registry STATIC
