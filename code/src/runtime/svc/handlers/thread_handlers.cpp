@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include <cstdint>
 
+#include "common/log/logger.hpp"
 #include "runtime/clock/runtime_clock.hpp"
 #include "runtime/svc/handler.hpp"
 #include "runtime/svc/syscall_numbers.hpp"
 #include "runtime/threads/clone/clone_flags.hpp"
+#include "runtime/threads/runtime_thread.hpp"
 #include "runtime/threads/thread_system.hpp"
 
 namespace duckemu::runtime::svc
@@ -167,6 +169,11 @@ int64_t sysExit(SyscallContext &ctx)
 
 int64_t sysExitGroup(SyscallContext &ctx)
 {
+	// A target that exits during a host-driven call is usually a failed
+	// self-check, not normal shutdown. Log the trap site so the caller can
+	// map it back to the library without a trace run.
+	DUCKEMU_WARN("exit_group(%d) from pc=0x%llx tid=%u", static_cast<int32_t>(ctx.args[0]),
+		static_cast<unsigned long long>(ctx.thread.next_pc.value()), ctx.tid);
 	ctx.threads.exitGroup(ctx.thread, static_cast<int32_t>(ctx.args[0]));
 	return 0;
 }

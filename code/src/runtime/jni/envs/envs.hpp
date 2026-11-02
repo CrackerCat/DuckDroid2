@@ -39,6 +39,8 @@ Result<void> installJavaIo(JavaWorld &world);
 Result<void> installJavaMath(JavaWorld &world);
 // Needs installJavaLang (String) to have run first.
 Result<void> installJavaUtil(JavaWorld &world);
+// Needs installJavaUtil (Enumeration) to have run first.
+Result<void> installJavaNet(JavaWorld &world);
 // Needs installJavaIo and installJavaMath to have run first.
 Result<void> installJavaSecurity(JavaWorld &world);
 

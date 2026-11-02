@@ -194,9 +194,27 @@ Result<uint64_t> newFile(JavaWorld &world, std::string_view path)
 	return object.value();
 }
 
+// java.io.FileDescriptor is the object half of a Linux fd. Android's Parcel
+// and ParcelFileDescriptor code reflects on its private `descriptor` field;
+// the value is the guest fd number and is filled by the case that opens one.
+Result<void> installFileDescriptor(JavaWorld &world)
+{
+	auto declared = world.declareClass("java/io/FileDescriptor", "java/lang/Object");
+	if (!declared.ok())
+	{
+		return declared.error();
+	}
+	auto descriptor = world.declareField(declared.value(), "descriptor", "I", false);
+	if (!descriptor.ok())
+	{
+		return descriptor.error();
+	}
+	return {};
+}
+
 Result<void> installJavaIo(JavaWorld &world)
 {
-	const auto installers = { installInputStream, installFile };
+	const auto installers = { installInputStream, installFile, installFileDescriptor };
 	for (const auto installer : installers)
 	{
 		auto installed = installer(world);

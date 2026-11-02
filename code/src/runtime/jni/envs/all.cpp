@@ -17,6 +17,7 @@ Result<void> installAll(JavaWorld &world)
 		installJavaIo,
 		installJavaMath,
 		installJavaUtil,
+		installJavaNet,
 		installJavaSecurity,
 	};
 	for (const Installer installer : installers)

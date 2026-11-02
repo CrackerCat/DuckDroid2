@@ -39,10 +39,14 @@ struct MapEntries
 
 std::unordered_map<uint64_t, MapEntries> g_maps;
 std::unordered_map<uint64_t, uint64_t> g_key_sets; // set object -> map object
+std::unordered_map<uint64_t, uint64_t> g_value_collections; // collection -> map object
+std::unordered_map<uint64_t, std::pair<uint64_t, size_t> > g_iterators; // iterator -> map, index
 uint64_t g_hash_map_class = 0;
 uint64_t g_hash_set_class = 0;
 uint64_t g_map_class = 0;
 uint64_t g_set_class = 0;
+uint64_t g_collection_class = 0;
+uint64_t g_iterator_class = 0;
 
 bool sameKey(JavaWorld &world, uint64_t first, uint64_t second)
 {
@@ -215,6 +219,121 @@ Result<uint64_t> setToArray(JavaWorld &world, InvokeContext &call)
 	return array.value();
 }
 
+// -- Map.values() and its Collection/Iterator ------------------------------
+//
+// The SDK serializes the map it just built by walking values(). The
+// collection is a live view: it stores the map object, and size/iterator read
+// the map's current entries.
+
+const MapEntries *entriesOf(uint64_t object)
+{
+	const auto found = g_maps.find(object);
+	return found == g_maps.end() ? nullptr : &found->second;
+}
+
+Result<uint64_t> mapValues(JavaWorld &world, InvokeContext &call)
+{
+	auto collection = world.allocateObject(g_collection_class);
+	if (!collection.ok())
+	{
+		return collection.error();
+	}
+	g_value_collections[collection.value()] = call.receiver;
+	return collection.value();
+}
+
+Result<uint64_t> collectionSize(JavaWorld &, InvokeContext &call)
+{
+	const auto view = g_value_collections.find(call.receiver);
+	if (view == g_value_collections.end())
+	{
+		return uint64_t{ 0 };
+	}
+	const auto map = g_maps.find(view->second);
+	return map == g_maps.end() ? uint64_t{ 0 } : map->second.entries.size();
+}
+
+Result<uint64_t> collectionIsEmpty(JavaWorld &, InvokeContext &call)
+{
+	const auto view = g_value_collections.find(call.receiver);
+	if (view == g_value_collections.end())
+	{
+		return uint64_t{ 1 };
+	}
+	const auto map = g_maps.find(view->second);
+	return map == g_maps.end() || map->second.entries.empty() ? uint64_t{ 1 } :
+								     uint64_t{ 0 };
+}
+
+Result<uint64_t> collectionIterator(JavaWorld &world, InvokeContext &call)
+{
+	auto iterator = world.allocateObject(g_iterator_class);
+	if (!iterator.ok())
+	{
+		return iterator.error();
+	}
+	const auto view = g_value_collections.find(call.receiver);
+	g_iterators[iterator.value()] =
+		std::make_pair(view == g_value_collections.end() ? uint64_t{ 0 } : view->second,
+			size_t{ 0 });
+	return iterator.value();
+}
+
+Result<uint64_t> collectionToArray(JavaWorld &world, InvokeContext &call)
+{
+	uint64_t map_object = 0;
+	const auto view = g_value_collections.find(call.receiver);
+	if (view != g_value_collections.end())
+	{
+		map_object = view->second;
+	}
+	const MapEntries *entries = entriesOf(map_object);
+	const uint64_t count = entries == nullptr ? 0 : entries->entries.size();
+	auto array = world.newArray(ArrayElementKind::Object, count, world.objectClass());
+	if (!array.ok())
+	{
+		return array.error();
+	}
+	for (uint64_t index = 0; index < count; ++index)
+	{
+		auto written = world.writeArrayElement(array.value(), index,
+			entries->entries[index].second);
+		if (!written.ok())
+		{
+			return written.error();
+		}
+	}
+	return array.value();
+}
+
+Result<uint64_t> iteratorHasNext(JavaWorld &, InvokeContext &call)
+{
+	const auto found = g_iterators.find(call.receiver);
+	if (found == g_iterators.end())
+	{
+		return uint64_t{ 0 };
+	}
+	const MapEntries *entries = entriesOf(found->second.first);
+	const size_t size = entries == nullptr ? 0 : entries->entries.size();
+	return found->second.second < size ? uint64_t{ 1 } : uint64_t{ 0 };
+}
+
+Result<uint64_t> iteratorNext(JavaWorld &, InvokeContext &call)
+{
+	auto &state = g_iterators[call.receiver];
+	const MapEntries *entries = entriesOf(state.first);
+	if (entries == nullptr || state.second >= entries->entries.size())
+	{
+		return uint64_t{ 0 };
+	}
+	return entries->entries[state.second++].second;
+}
+
+Result<uint64_t> iteratorRemove(JavaWorld &, InvokeContext &)
+{
+	return uint64_t{ 0 };
+}
+
 } // namespace
 
 Result<void> installJavaUtil(JavaWorld &world)
@@ -255,8 +374,72 @@ Result<void> installJavaUtil(JavaWorld &world)
 		return list.error();
 	}
 
+	// getNetworkInterfaces() and friends return an Enumeration. The engine's
+	// enumeration is always empty: a device probe that walks it sees "none".
+	auto enumeration = world.declareClass("java/util/Enumeration", "");
+	if (!enumeration.ok())
+	{
+		return enumeration.error();
+	}
+	const auto has_more = declare(world, enumeration.value(), "hasMoreElements", "()Z",
+		false, [](JavaWorld &, InvokeContext &) -> Result<uint64_t> {
+			return uint64_t{ 0 };
+		});
+	if (!has_more.ok())
+	{
+		return has_more;
+	}
+	const auto next = declare(world, enumeration.value(), "nextElement",
+		"()Ljava/lang/Object;", false,
+		[](JavaWorld &, InvokeContext &) -> Result<uint64_t> { return uint64_t{ 0 }; });
+	if (!next.ok())
+	{
+		return next;
+	}
+
+	// Map.values() hands out a Collection; Collection.iterator() hands out an
+	// Iterator. Both are live views over the host-side map.
+	auto collection = world.declareClass("java/util/Collection", "");
+	if (!collection.ok())
+	{
+		return collection.error();
+	}
+	g_collection_class = collection.value();
+	auto iterator = world.declareClass("java/util/Iterator", "");
+	if (!iterator.ok())
+	{
+		return iterator.error();
+	}
+	g_iterator_class = iterator.value();
+	const struct
+	{
+		uint64_t klass;
+		const char *name;
+		const char *signature;
+		ShimHandler shim;
+	} view_methods[] = {
+		{ g_collection_class, "size", "()I", collectionSize },
+		{ g_collection_class, "isEmpty", "()Z", collectionIsEmpty },
+		{ g_collection_class, "iterator", "()Ljava/util/Iterator;", collectionIterator },
+		{ g_collection_class, "toArray", "()[Ljava/lang/Object;", collectionToArray },
+		{ g_iterator_class, "hasNext", "()Z", iteratorHasNext },
+		{ g_iterator_class, "next", "()Ljava/lang/Object;", iteratorNext },
+		{ g_iterator_class, "remove", "()V", iteratorRemove },
+	};
+	for (const auto &method : view_methods)
+	{
+		auto declared = declare(world, method.klass, method.name, method.signature,
+			false, method.shim);
+		if (!declared.ok())
+		{
+			return declared;
+		}
+	}
+
 	g_maps.clear();
 	g_key_sets.clear();
+	g_value_collections.clear();
+	g_iterators.clear();
 
 	// The SDK builds its result map with NewObject(HashMap, <init>(I)) and
 	// fills it through the interface method ids it resolved on Map.
@@ -298,6 +481,7 @@ Result<void> installJavaUtil(JavaWorld &world)
 		{ g_map_class, "containsKey", "(Ljava/lang/Object;)Z", mapContainsKey },
 		{ g_map_class, "size", "()I", mapSize },
 		{ g_map_class, "keySet", "()Ljava/util/Set;", mapKeySet },
+		{ g_map_class, "values", "()Ljava/util/Collection;", mapValues },
 		{ g_map_class, "toString", "()Ljava/lang/String;", mapToString },
 		{ g_hash_map_class, "put",
 			"(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;", mapPut },
@@ -305,6 +489,7 @@ Result<void> installJavaUtil(JavaWorld &world)
 		{ g_hash_map_class, "containsKey", "(Ljava/lang/Object;)Z", mapContainsKey },
 		{ g_hash_map_class, "size", "()I", mapSize },
 		{ g_hash_map_class, "keySet", "()Ljava/util/Set;", mapKeySet },
+		{ g_hash_map_class, "values", "()Ljava/util/Collection;", mapValues },
 		{ g_hash_map_class, "toString", "()Ljava/lang/String;", mapToString },
 		{ g_set_class, "toArray", "()[Ljava/lang/Object;", setToArray },
 		{ g_hash_set_class, "toArray", "()[Ljava/lang/Object;", setToArray },
@@ -337,10 +522,68 @@ Result<void> installJavaUtil(JavaWorld &world)
 	{
 		return list_get;
 	}
-	return declare(world, list.value(), "toArray", "()[Ljava/lang/Object;", false,
+	auto list_to_array = declare(world, list.value(), "toArray",
+		"()[Ljava/lang/Object;", false,
 		[](JavaWorld &java, InvokeContext &) -> Result<uint64_t> {
 			return java.newArray(ArrayElementKind::Object, 0, java.objectClass());
 		});
+	if (!list_to_array.ok())
+	{
+		return list_to_array;
+	}
+
+	// ArrayList is the concrete list Android hands out (WindowManagerGlobal's
+	// mViews, package lists). The engine's list is always empty.
+	auto array_list = world.declareClass("java/util/ArrayList", "java/lang/Object");
+	if (!array_list.ok())
+	{
+		return array_list.error();
+	}
+	const struct
+	{
+		const char *name;
+		const char *signature;
+		ShimHandler shim;
+	} array_list_methods[] = {
+		{ "<init>", "()V",
+			[](JavaWorld &, InvokeContext &) -> Result<uint64_t> {
+				return uint64_t{ 0 };
+			} },
+		{ "<init>", "(I)V",
+			[](JavaWorld &, InvokeContext &) -> Result<uint64_t> {
+				return uint64_t{ 0 };
+			} },
+		{ "size", "()I",
+			[](JavaWorld &, InvokeContext &) -> Result<uint64_t> {
+				return uint64_t{ 0 };
+			} },
+		{ "isEmpty", "()Z",
+			[](JavaWorld &, InvokeContext &) -> Result<uint64_t> {
+				return uint64_t{ 1 };
+			} },
+		{ "get", "(I)Ljava/lang/Object;",
+			[](JavaWorld &, InvokeContext &) -> Result<uint64_t> {
+				return uint64_t{ 0 };
+			} },
+		{ "add", "(Ljava/lang/Object;)Z",
+			[](JavaWorld &, InvokeContext &) -> Result<uint64_t> {
+				return uint64_t{ 1 };
+			} },
+		{ "toArray", "()[Ljava/lang/Object;",
+			[](JavaWorld &java, InvokeContext &) -> Result<uint64_t> {
+				return java.newArray(ArrayElementKind::Object, 0, java.objectClass());
+			} },
+	};
+	for (const auto &method : array_list_methods)
+	{
+		auto declared = declare(world, array_list.value(), method.name, method.signature,
+			false, method.shim);
+		if (!declared.ok())
+		{
+			return declared;
+		}
+	}
+	return {};
 }
 
 } // namespace duckemu::runtime::jni::envs

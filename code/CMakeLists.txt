@@ -127,6 +127,7 @@ add_library(duckemu_runtime STATIC
   src/runtime/jni/envs/java_lang.cpp
   src/runtime/jni/envs/java_io.cpp
   src/runtime/jni/envs/java_math.cpp
+  src/runtime/jni/envs/java_net.cpp
   src/runtime/jni/envs/java_security.cpp
   src/runtime/jni/envs/java_util.cpp
   src/runtime/jni/refs/ref_table.cpp

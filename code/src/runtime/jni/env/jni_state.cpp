@@ -2,6 +2,7 @@
 #include "runtime/jni/env/jni_state.hpp"
 
 #include <cstdio>
+#include <cstdlib>
 #include <utility>
 
 #include "common/log/logger.hpp"
@@ -18,6 +19,15 @@ namespace
 {
 
 constexpr uint32_t kCallGroupSize = 30; // ten result kinds, three variants each
+
+// DUCKEMU_JNI_TRACE=1 prints every managed Java call and field access with
+// resolved arguments and the raw result. Development aid for environment
+// packs: the strict-mode events only name what failed, not what ran.
+bool jniTraceEnabled()
+{
+	static const bool enabled = std::getenv("DUCKEMU_JNI_TRACE") != nullptr;
+	return enabled;
+}
 
 // JNI result kind by type index inside a Call group: Object, Boolean, Byte,
 // Char, Short, Int, Long, Float, Double, Void.
@@ -786,13 +796,10 @@ int64_t JniState::callMethod(uint32_t slot, HostCallArgs &args)
 		reject();
 		return 0;
 	}
-	if (decoded.result == ValueKind::Float || decoded.result == ValueKind::Double)
-	{
-		// The adapter does not return floating-point results in v0.
-		reject();
-		return 0;
-	}
-
+	// Float/double results occupy s0/d0, which alias the low bits of v0, so
+	// the raw bit pattern the shim returns is already the ABI value. Float
+	// *arguments* would live in s0-s7 rather than x0-x7 and are not read yet;
+	// every floating-point method reached so far is a no-argument getter.
 	if (record == nullptr || record->is_static != decoded.is_static || record->parsed.result != decoded.result)
 	{
 		publishMissing(observer::JniEventKind::MissingMethod, {}, {}, {}, slot, args.tid);
@@ -867,6 +874,35 @@ int64_t JniState::callMethod(uint32_t slot, HostCallArgs &args)
 	call.receiver = receiver_object;
 	call.args = std::move(resolved);
 	call.tid = args.tid;
+	const bool trace = jniTraceEnabled();
+	if (trace)
+	{
+		std::fprintf(stderr, "jni-call tid=%u %s.%s%s%s(", args.tid,
+			std::string(world_->descriptorOfClass(record->class_object)).c_str(),
+			record->name.c_str(), record->signature.c_str(),
+			record->is_static ? " static" : "");
+		if (!record->is_static)
+		{
+			std::fprintf(stderr, "@0x%llx", static_cast<unsigned long long>(receiver_object));
+		}
+		for (size_t index = 0; index < call.args.size(); ++index)
+		{
+			std::fprintf(stderr, "%s", index == 0 && record->is_static ? "" : ",");
+			const uint64_t argument = call.args[index];
+			if (record->parsed.args[index] == ValueKind::Object && argument != 0 &&
+				world_->descriptorOfClass(world_->classOf(argument)) == "java/lang/String")
+			{
+				auto text = world_->stringUtf8(argument);
+				if (text.ok())
+				{
+					std::fprintf(stderr, "\"%s\"", text.value().c_str());
+					continue;
+				}
+			}
+			std::fprintf(stderr, "0x%llx", static_cast<unsigned long long>(argument));
+		}
+		std::fprintf(stderr, ")");
+	}
 	auto called = record->shim(*world_, call);
 	if (!called.ok())
 	{
@@ -875,6 +911,21 @@ int64_t JniState::callMethod(uint32_t slot, HostCallArgs &args)
 		return 0;
 	}
 	uint64_t result = called.value();
+	if (trace)
+	{
+		std::fprintf(stderr, " = 0x%llx",
+			static_cast<unsigned long long>(result));
+		if (decoded.result == ValueKind::Object && result != 0 &&
+			world_->descriptorOfClass(world_->classOf(result)) == "java/lang/String")
+		{
+			auto text = world_->stringUtf8(result);
+			if (text.ok())
+			{
+				std::fprintf(stderr, " \"%s\"", text.value().c_str());
+			}
+		}
+		std::fprintf(stderr, "\n");
+	}
 	if (decoded.result == ValueKind::Object && result != 0)
 	{
 		auto handle = newLocal(args.thread_pointer, result);
@@ -890,7 +941,7 @@ int64_t JniState::callMethod(uint32_t slot, HostCallArgs &args)
 int64_t JniState::accessField(uint32_t slot, HostCallArgs &args)
 {
 	const FieldSlot decoded = decodeFieldSlot(slot);
-	if (!decoded.valid || decoded.kind == ValueKind::Float || decoded.kind == ValueKind::Double)
+	if (!decoded.valid)
 	{
 		publishUnsupported(slot, args.tid);
 		return 0;
@@ -910,6 +961,12 @@ int64_t JniState::accessField(uint32_t slot, HostCallArgs &args)
 	if (decoded.is_set)
 	{
 		const uint64_t value = decoded.kind == ValueKind::Object ? refs_.resolve(args.x[3]) : args.x[3];
+		if (jniTraceEnabled())
+		{
+			std::fprintf(stderr, "jni-field-set tid=%u %s.%s = 0x%llx\n", args.tid,
+				std::string(world_->descriptorOfClass(target_class)).c_str(),
+				record->name.c_str(), static_cast<unsigned long long>(value));
+		}
 		const Result<void> written = decoded.is_static
 										 ? world_->writeStaticField(target_class, record->id, value)
 										 : world_->writeInstanceField(refs_.resolve(args.x[1]), record->id, value);
@@ -926,6 +983,22 @@ int64_t JniState::accessField(uint32_t slot, HostCallArgs &args)
 	if (!value.ok())
 	{
 		return 0;
+	}
+	if (jniTraceEnabled())
+	{
+		std::fprintf(stderr, "jni-field-get tid=%u %s.%s = 0x%llx", args.tid,
+			std::string(world_->descriptorOfClass(target_class)).c_str(),
+			record->name.c_str(), static_cast<unsigned long long>(value.value()));
+		if (decoded.kind == ValueKind::Object && value.value() != 0 &&
+			world_->descriptorOfClass(world_->classOf(value.value())) == "java/lang/String")
+		{
+			auto text = world_->stringUtf8(value.value());
+			if (text.ok())
+			{
+				std::fprintf(stderr, " \"%s\"", text.value().c_str());
+			}
+		}
+		std::fprintf(stderr, "\n");
 	}
 	if (decoded.kind == ValueKind::Object)
 	{

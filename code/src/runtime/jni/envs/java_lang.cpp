@@ -86,6 +86,170 @@ Result<void> installObject(JavaWorld &world)
 	return result;
 }
 
+// Number of parameters in a method signature ("(ILjava/lang/String;)V" -> 2).
+size_t signatureParameterCount(std::string_view signature)
+{
+	if (signature.size() < 2 || signature.front() != '(')
+	{
+		return 0;
+	}
+	size_t index = 1;
+	size_t count = 0;
+	while (index < signature.size() && signature[index] != ')')
+	{
+		if (signature[index] == '[')
+		{
+			++index;
+			continue;
+		}
+		if (signature[index] == 'L')
+		{
+			const size_t end = signature.find(';', index);
+			if (end == std::string_view::npos)
+			{
+				break;
+			}
+			index = end + 1;
+		}
+		else
+		{
+			++index;
+		}
+		++count;
+	}
+	return count;
+}
+
+Result<uint64_t> makeMethodObject(JavaWorld &world, uint64_t method_id)
+{
+	const uint64_t method_class = world.findClass("java/lang/reflect/Method");
+	if (method_class == 0)
+	{
+		return Error{ ErrorCode::NotFound, "java/lang/reflect/Method is not installed" };
+	}
+	const uint64_t id_field = world.findField(method_class, "__id", "J", false);
+	auto object = world.allocateObject(method_class);
+	if (!object.ok())
+	{
+		return object.error();
+	}
+	auto written = world.writeInstanceField(object.value(), id_field, method_id);
+	if (!written.ok())
+	{
+		return written.error();
+	}
+	return object.value();
+}
+
+Result<uint64_t> makeFieldObject(JavaWorld &world, uint64_t field_id)
+{
+	const uint64_t field_class = world.findClass("java/lang/reflect/Field");
+	if (field_class == 0)
+	{
+		return Error{ ErrorCode::NotFound, "java/lang/reflect/Field is not installed" };
+	}
+	const uint64_t id_field = world.findField(field_class, "__id", "J", false);
+	auto object = world.allocateObject(field_class);
+	if (!object.ok())
+	{
+		return object.error();
+	}
+	auto written = world.writeInstanceField(object.value(), id_field, field_id);
+	if (!written.ok())
+	{
+		return written.error();
+	}
+	return object.value();
+}
+
+// Method.invoke/Field.get return Object; a primitive result is boxed the way
+// the Java language requires.
+Result<uint64_t> boxValue(JavaWorld &world, ValueKind kind, uint64_t raw)
+{
+	const char *wrapper = nullptr;
+	const char *field_signature = nullptr;
+	switch (kind)
+	{
+	case ValueKind::Int:
+		wrapper = "java/lang/Integer";
+		field_signature = "I";
+		break;
+	case ValueKind::Boolean:
+		wrapper = "java/lang/Boolean";
+		field_signature = "Z";
+		break;
+	case ValueKind::Long:
+		wrapper = "java/lang/Long";
+		field_signature = "J";
+		break;
+	default:
+		return raw;
+	}
+	const uint64_t klass = world.findClass(wrapper);
+	const uint64_t field = klass == 0 ? 0 : world.findField(klass, "value", field_signature, false);
+	if (field == 0)
+	{
+		return raw;
+	}
+	auto object = world.allocateObject(klass);
+	if (!object.ok())
+	{
+		return object.error();
+	}
+	auto written = world.writeInstanceField(object.value(), field, raw);
+	if (!written.ok())
+	{
+		return written.error();
+	}
+	return object.value();
+}
+
+Result<uint64_t> unboxArgument(JavaWorld &world, ValueKind kind, uint64_t object)
+{
+	if (object == 0)
+	{
+		return uint64_t{ 0 };
+	}
+	switch (kind)
+	{
+	case ValueKind::Boolean:
+	{
+		if (!world.isInstanceOf(object, world.findClass("java/lang/Boolean")))
+		{
+			return object;
+		}
+		auto value = booleanValue(world, object);
+		if (!value.ok())
+		{
+			return value.error();
+		}
+		return value.value() ? uint64_t{ 1 } : uint64_t{ 0 };
+	}
+	case ValueKind::Int:
+	case ValueKind::Byte:
+	case ValueKind::Short:
+	case ValueKind::Char:
+	{
+		auto value = integerValue(world, object);
+		if (!value.ok())
+		{
+			return object;
+		}
+		return static_cast<uint64_t>(static_cast<uint32_t>(value.value()));
+	}
+	case ValueKind::Long:
+	{
+		if (!world.isInstanceOf(object, world.findClass("java/lang/Long")))
+		{
+			return object;
+		}
+		return longValue(world, object);
+	}
+	default:
+		return object;
+	}
+}
+
 Result<void> installClass(JavaWorld &world)
 {
 	const uint64_t klass = world.findClass("java/lang/Class");
@@ -93,10 +257,434 @@ Result<void> installClass(JavaWorld &world)
 	{
 		return Error{ ErrorCode::Internal, "java/lang/Class is not bootstrapped" };
 	}
-	return declare(world, klass, "getName", "()Ljava/lang/String;", false,
+	auto named = declare(world, klass, "getName", "()Ljava/lang/String;", false,
 		[](JavaWorld &java, InvokeContext &call) -> Result<uint64_t> {
 			return java.newString(descriptorToClassName(java.descriptorOfClass(call.receiver)));
 		});
+	if (!named.ok())
+	{
+		return named.error();
+	}
+	// Hidden field libcore exposes; reflection reads it to test member
+	// visibility. Not carrying per-class access flags yet, so it reads 0.
+	auto access_flags = world.declareField(klass, "accessFlags", "I", false);
+	if (!access_flags.ok())
+	{
+		return access_flags.error();
+	}
+	auto for_name = declare(world, klass, "forName",
+		"(Ljava/lang/String;)Ljava/lang/Class;", true,
+		[](JavaWorld &java, InvokeContext &call) -> Result<uint64_t> {
+			if (call.args.empty() || call.args[0] == 0)
+			{
+				return uint64_t{ 0 };
+			}
+			auto name = java.stringUtf8(call.args[0]);
+			if (!name.ok())
+			{
+				return name.error();
+			}
+			for (char &character : name.value())
+			{
+				if (character == '.')
+				{
+					character = '/';
+				}
+			}
+			return java.findClass(name.value());
+		});
+	if (!for_name.ok())
+	{
+		return for_name;
+	}
+
+	// Reflection over members: the target asks a Class for its declared
+	// methods/fields and inspects them by name. Exactly what a device returns,
+	// with one wrapper object per declared member.
+	auto methods = declare(world, klass, "getDeclaredMethods",
+		"()[Ljava/lang/reflect/Method;", false,
+		[](JavaWorld &java, InvokeContext &call) -> Result<uint64_t> {
+			const uint64_t method_class = java.findClass("java/lang/reflect/Method");
+			if (method_class == 0)
+			{
+				return Error{ ErrorCode::NotFound,
+					"java/lang/reflect/Method is not installed" };
+			}
+			const std::vector<uint64_t> ids = java.declaredMethods(call.receiver);
+			auto array = java.newArray(ArrayElementKind::Object, ids.size(), method_class);
+			if (!array.ok())
+			{
+				return array.error();
+			}
+			for (size_t index = 0; index < ids.size(); ++index)
+			{
+				auto object = makeMethodObject(java, ids[index]);
+				if (!object.ok())
+				{
+					return object.error();
+				}
+				auto stored = java.writeArrayElement(array.value(), index, object.value());
+				if (!stored.ok())
+				{
+					return stored.error();
+				}
+			}
+			return array.value();
+		});
+	if (!methods.ok())
+	{
+		return methods;
+	}
+	auto declared_method = declare(world, klass, "getDeclaredMethod",
+		"(Ljava/lang/String;[Ljava/lang/Class;)Ljava/lang/reflect/Method;", false,
+		[](JavaWorld &java, InvokeContext &call) -> Result<uint64_t> {
+			if (call.args.size() < 2 || call.args[0] == 0)
+			{
+				return uint64_t{ 0 };
+			}
+			auto name = java.stringUtf8(call.args[0]);
+			if (!name.ok())
+			{
+				return name.error();
+			}
+			size_t parameters = 0;
+			if (call.args[1] != 0)
+			{
+				auto view = java.arrayView(call.args[1]);
+				if (!view.ok())
+				{
+					return view.error();
+				}
+				parameters = view.value().length;
+			}
+			for (const uint64_t id : java.declaredMethods(call.receiver))
+			{
+				const MethodRecord *record = java.method(id);
+				if (record == nullptr || record->name != name.value())
+				{
+					continue;
+				}
+				if (signatureParameterCount(record->signature) != parameters)
+				{
+					continue;
+				}
+				return makeMethodObject(java, id);
+			}
+			return uint64_t{ 0 };
+		});
+	if (!declared_method.ok())
+	{
+		return declared_method;
+	}
+	return declare(world, klass, "getDeclaredFields",
+		"()[Ljava/lang/reflect/Field;", false,
+		[](JavaWorld &java, InvokeContext &call) -> Result<uint64_t> {
+			const uint64_t field_class = java.findClass("java/lang/reflect/Field");
+			if (field_class == 0)
+			{
+				return Error{ ErrorCode::NotFound,
+					"java/lang/reflect/Field is not installed" };
+			}
+			const std::vector<uint64_t> ids = java.declaredFields(call.receiver);
+			auto array = java.newArray(ArrayElementKind::Object, ids.size(), field_class);
+			if (!array.ok())
+			{
+				return array.error();
+			}
+			for (size_t index = 0; index < ids.size(); ++index)
+			{
+				auto object = makeFieldObject(java, ids[index]);
+				if (!object.ok())
+				{
+					return object.error();
+				}
+				auto stored = java.writeArrayElement(array.value(), index, object.value());
+				if (!stored.ok())
+				{
+					return stored.error();
+				}
+			}
+			return array.value();
+		});
+}
+
+// java.lang.reflect: Method/Field/AccessibleObject with a host-side id in a
+// private field. Targets reflect over platform classes by name; the ids are
+// engine method ids, so a name/declaring-class read is exact and invoke()
+// flips through the same shim the JNI call would reach.
+Result<void> installReflection(JavaWorld &world)
+{
+	auto accessible = world.declareClass("java/lang/reflect/AccessibleObject",
+		"java/lang/Object");
+	if (!accessible.ok())
+	{
+		return accessible.error();
+	}
+	auto accessible_set = declare(world, accessible.value(), "setAccessible",
+		"(Z)V", false, [](JavaWorld &, InvokeContext &) -> Result<uint64_t> {
+			return uint64_t{ 0 };
+		});
+	if (!accessible_set.ok())
+	{
+		return accessible_set;
+	}
+	auto accessible_get = declare(world, accessible.value(), "isAccessible", "()Z",
+		false, [](JavaWorld &, InvokeContext &) -> Result<uint64_t> {
+			return uint64_t{ 0 };
+		});
+	if (!accessible_get.ok())
+	{
+		return accessible_get;
+	}
+
+	auto method = world.declareClass("java/lang/reflect/Method",
+		"java/lang/reflect/AccessibleObject");
+	if (!method.ok())
+	{
+		return method.error();
+	}
+	auto method_id = world.declareField(method.value(), "__id", "J", false);
+	if (!method_id.ok())
+	{
+		return method_id.error();
+	}
+	const uint64_t method_id_field = method_id.value();
+
+	auto method_name = declare(world, method.value(), "getName",
+		"()Ljava/lang/String;", false,
+		[method_id_field](JavaWorld &java, InvokeContext &call) -> Result<uint64_t> {
+			auto id = java.readInstanceField(call.receiver, method_id_field);
+			if (!id.ok())
+			{
+				return id.error();
+			}
+			const MethodRecord *record = java.method(id.value());
+			if (record == nullptr)
+			{
+				return uint64_t{ 0 };
+			}
+			return java.newString(record->name);
+		});
+	if (!method_name.ok())
+	{
+		return method_name;
+	}
+	auto method_declaring = declare(world, method.value(), "getDeclaringClass",
+		"()Ljava/lang/Class;", false,
+		[method_id_field](JavaWorld &java, InvokeContext &call) -> Result<uint64_t> {
+			auto id = java.readInstanceField(call.receiver, method_id_field);
+			if (!id.ok())
+			{
+				return id.error();
+			}
+			const MethodRecord *record = java.method(id.value());
+			return record == nullptr ? uint64_t{ 0 } : record->class_object;
+		});
+	if (!method_declaring.ok())
+	{
+		return method_declaring;
+	}
+	auto method_parameters = declare(world, method.value(), "getParameterTypes",
+		"()[Ljava/lang/Class;", false,
+		[](JavaWorld &java, InvokeContext &) -> Result<uint64_t> {
+			return java.newArray(ArrayElementKind::Object, 0, java.classClass());
+		});
+	if (!method_parameters.ok())
+	{
+		return method_parameters;
+	}
+	auto method_return = declare(world, method.value(), "getReturnType",
+		"()Ljava/lang/Class;", false,
+		[](JavaWorld &, InvokeContext &) -> Result<uint64_t> { return uint64_t{ 0 }; });
+	if (!method_return.ok())
+	{
+		return method_return;
+	}
+	auto method_modifiers = declare(world, method.value(), "getModifiers", "()I", false,
+		[](JavaWorld &, InvokeContext &) -> Result<uint64_t> { return uint64_t{ 0 }; });
+	if (!method_modifiers.ok())
+	{
+		return method_modifiers;
+	}
+	// invoke() flips through the same shim a direct JNI call would reach, and
+	// boxes a primitive result the way the Java language requires.
+	auto method_invoke = declare(world, method.value(), "invoke",
+		"(Ljava/lang/Object;[Ljava/lang/Object;)Ljava/lang/Object;", false,
+		[method_id_field](JavaWorld &java, InvokeContext &call) -> Result<uint64_t> {
+			auto id = java.readInstanceField(call.receiver, method_id_field);
+			if (!id.ok())
+			{
+				return id.error();
+			}
+			const MethodRecord *record = java.method(id.value());
+			if (record == nullptr || !record->shim)
+			{
+				return uint64_t{ 0 };
+			}
+			InvokeContext inner;
+			inner.receiver = record->is_static || call.args.empty() ? 0 : call.args[0];
+			inner.tid = call.tid;
+			const uint64_t array = call.args.size() > 1 ? call.args[1] : 0;
+			if (array == 0)
+			{
+				if (!record->parsed.args.empty())
+				{
+					return uint64_t{ 0 };
+				}
+			}
+			else
+			{
+				auto view = java.arrayView(array);
+				if (!view.ok())
+				{
+					return view.error();
+				}
+				if (view.value().length != record->parsed.args.size())
+				{
+					return uint64_t{ 0 };
+				}
+				for (size_t index = 0; index < record->parsed.args.size(); ++index)
+				{
+					auto element = java.readArrayElement(array, index);
+					if (!element.ok())
+					{
+						return element.error();
+					}
+					const ValueKind kind = record->parsed.args[index];
+					if (kind == ValueKind::Object)
+					{
+						inner.args.push_back(element.value());
+						continue;
+					}
+					auto value = unboxArgument(java, kind, element.value());
+					if (!value.ok())
+					{
+						return value.error();
+					}
+					inner.args.push_back(value.value());
+				}
+			}
+			auto called = record->shim(java, inner);
+			if (!called.ok())
+			{
+				return called.error();
+			}
+			return boxValue(java, record->parsed.result, called.value());
+		});
+	if (!method_invoke.ok())
+	{
+		return method_invoke;
+	}
+
+	auto field = world.declareClass("java/lang/reflect/Field",
+		"java/lang/reflect/AccessibleObject");
+	if (!field.ok())
+	{
+		return field.error();
+	}
+	auto field_id = world.declareField(field.value(), "__id", "J", false);
+	if (!field_id.ok())
+	{
+		return field_id.error();
+	}
+	const uint64_t field_id_field = field_id.value();
+	auto field_name = declare(world, field.value(), "getName", "()Ljava/lang/String;",
+		false, [field_id_field](JavaWorld &java, InvokeContext &call) -> Result<uint64_t> {
+			auto id = java.readInstanceField(call.receiver, field_id_field);
+			if (!id.ok())
+			{
+				return id.error();
+			}
+			const FieldRecord *record = java.field(id.value());
+			if (record == nullptr)
+			{
+				return uint64_t{ 0 };
+			}
+			return java.newString(record->name);
+		});
+	if (!field_name.ok())
+	{
+		return field_name;
+	}
+	auto field_declaring = declare(world, field.value(), "getDeclaringClass",
+		"()Ljava/lang/Class;", false,
+		[field_id_field](JavaWorld &java, InvokeContext &call) -> Result<uint64_t> {
+			auto id = java.readInstanceField(call.receiver, field_id_field);
+			if (!id.ok())
+			{
+				return id.error();
+			}
+			const FieldRecord *record = java.field(id.value());
+			return record == nullptr ? uint64_t{ 0 } : record->class_object;
+		});
+	if (!field_declaring.ok())
+	{
+		return field_declaring;
+	}
+	const auto read_field = [field_id_field](JavaWorld &java,
+				   InvokeContext &call) -> Result<uint64_t> {
+		auto id = java.readInstanceField(call.receiver, field_id_field);
+		if (!id.ok())
+		{
+			return id.error();
+		}
+		const FieldRecord *record = java.field(id.value());
+		if (record == nullptr)
+		{
+			return uint64_t{ 0 };
+		}
+		const uint64_t target = call.args.empty() ? 0 : call.args[0];
+		return record->is_static ? java.readStaticField(record->class_object, record->id) :
+					   java.readInstanceField(target, record->id);
+	};
+	auto field_get = declare(world, field.value(), "get",
+		"(Ljava/lang/Object;)Ljava/lang/Object;", false,
+		[field_id_field, read_field](JavaWorld &java,
+					   InvokeContext &call) -> Result<uint64_t> {
+			auto id = java.readInstanceField(call.receiver, field_id_field);
+			if (!id.ok())
+			{
+				return id.error();
+			}
+			const FieldRecord *record = java.field(id.value());
+			if (record == nullptr)
+			{
+				return uint64_t{ 0 };
+			}
+			auto value = read_field(java, call);
+			if (!value.ok())
+			{
+				return value.error();
+			}
+			return boxValue(java, record->kind, value.value());
+		});
+	if (!field_get.ok())
+	{
+		return field_get;
+	}
+	const struct
+	{
+		const char *name;
+		const char *signature;
+	} raw_getters[] = {
+		{ "getBoolean", "(Ljava/lang/Object;)Z" },
+		{ "getByte", "(Ljava/lang/Object;)B" },
+		{ "getChar", "(Ljava/lang/Object;)C" },
+		{ "getShort", "(Ljava/lang/Object;)S" },
+		{ "getInt", "(Ljava/lang/Object;)I" },
+		{ "getLong", "(Ljava/lang/Object;)J" },
+	};
+	Result<void> result;
+	for (const auto &getter : raw_getters)
+	{
+		result = declare(world, field.value(), getter.name, getter.signature, false,
+			read_field);
+		if (!result.ok())
+		{
+			return result;
+		}
+	}
+	return result;
 }
 
 // java.lang.ClassLoader: the managed class loader chain. Targets that load a
@@ -127,30 +715,45 @@ Result<void> installClassLoader(JavaWorld &world)
 	{
 		return result;
 	}
-	return declare(world, klass, "findClass", "(Ljava/lang/String;)Ljava/lang/Class;",
-		false, [](JavaWorld &java, InvokeContext &call) -> Result<uint64_t> {
-			if (call.args.empty() || call.args[0] == 0)
+	const auto resolve = [](JavaWorld &java, InvokeContext &call) -> Result<uint64_t> {
+		if (call.args.empty() || call.args[0] == 0)
+		{
+			return uint64_t{ 0 };
+		}
+		auto name = java.stringUtf8(call.args[0]);
+		if (!name.ok())
+		{
+			return name.error();
+		}
+		for (char &character : name.value())
+		{
+			if (character == '.')
 			{
-				return uint64_t{ 0 };
+				character = '/';
 			}
-			auto name = java.stringUtf8(call.args[0]);
-			if (!name.ok())
-			{
-				return name.error();
-			}
-			for (char &character : name.value())
-			{
-				if (character == '.')
-				{
-					character = '/';
-				}
-			}
-			return java.findClass(name.value());
-		});
+		}
+		return java.findClass(name.value());
+	};
+	auto find = declare(world, klass, "findClass",
+		"(Ljava/lang/String;)Ljava/lang/Class;", false, resolve);
+	if (!find.ok())
+	{
+		return find;
+	}
+	// loadClass is the public entry; a device throws ClassNotFoundException on
+	// a miss. The engine has no exception model here, so a miss is null and
+	// the JNI layer reports it as a missing class like any other lookup.
+	return declare(world, klass, "loadClass",
+		"(Ljava/lang/String;)Ljava/lang/Class;", false, resolve);
 }
 
 Result<void> installString(JavaWorld &world)
 {
+	auto sequence = world.declareClass("java/lang/CharSequence", "");
+	if (!sequence.ok())
+	{
+		return sequence.error();
+	}
 	auto declared = world.declareClass("java/lang/String", "java/lang/Object");
 	if (!declared.ok())
 	{
@@ -917,11 +1520,63 @@ Result<uint64_t> longValue(JavaWorld &world, uint64_t object)
 	return world.readInstanceField(object, field);
 }
 
+// Primitive class objects: reflection compares parameter Types against the
+// wrappers' TYPE fields, so `int.class` has to be a real Class object whose
+// name is "int". The engine models it as a class with a primitive descriptor.
+Result<void> installPrimitiveTypes(JavaWorld &world)
+{
+	const struct
+	{
+		const char *wrapper;
+		const char *descriptor;
+	} types[] = {
+		{ "java/lang/Boolean", "boolean" },
+		{ "java/lang/Byte", "byte" },
+		{ "java/lang/Character", "char" },
+		{ "java/lang/Short", "short" },
+		{ "java/lang/Integer", "int" },
+		{ "java/lang/Long", "long" },
+		{ "java/lang/Float", "float" },
+		{ "java/lang/Double", "double" },
+		{ "java/lang/Void", "void" },
+	};
+	for (const auto &type : types)
+	{
+		uint64_t wrapper = world.findClass(type.wrapper);
+		if (wrapper == 0)
+		{
+			auto declared = world.declareClass(type.wrapper, "java/lang/Object");
+			if (!declared.ok())
+			{
+				return declared.error();
+			}
+			wrapper = declared.value();
+		}
+		auto primitive = world.declareClass(type.descriptor, "");
+		if (!primitive.ok())
+		{
+			return primitive.error();
+		}
+		auto field = world.declareField(wrapper, "TYPE", "Ljava/lang/Class;", true);
+		if (!field.ok())
+		{
+			return field.error();
+		}
+		auto written = world.writeStaticField(wrapper, field.value(), primitive.value());
+		if (!written.ok())
+		{
+			return written.error();
+		}
+	}
+	return {};
+}
+
 Result<void> installJavaLang(JavaWorld &world)
 {
 	const auto installers = {
 		installObject,
 		installClass,
+		installReflection,
 		installClassLoader,
 		installString,
 		installSystem,
@@ -932,6 +1587,7 @@ Result<void> installJavaLang(JavaWorld &world)
 		installLong,
 		installFloat,
 		installDouble,
+		installPrimitiveTypes,
 	};
 	for (const auto installer : installers)
 	{

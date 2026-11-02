@@ -153,6 +153,10 @@ class JavaWorld
 
 	[[nodiscard]] const MethodRecord *method(uint64_t method_id) const;
 	[[nodiscard]] const FieldRecord *field(uint64_t field_id) const;
+	// Member ids declared by this class itself (not its superclasses), in
+	// declaration order. Backs java.lang.Class.getDeclaredMethods/Fields.
+	[[nodiscard]] std::vector<uint64_t> declaredMethods(uint64_t class_object) const;
+	[[nodiscard]] std::vector<uint64_t> declaredFields(uint64_t class_object) const;
 	[[nodiscard]] std::string_view descriptorOfClass(uint64_t class_object) const;
 	[[nodiscard]] uint64_t classOf(uint64_t object) const;
 	// True when the address is a class object (its class is java/lang/Class).

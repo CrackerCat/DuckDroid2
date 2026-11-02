@@ -590,6 +590,38 @@ const FieldRecord *JavaWorld::field(uint64_t field_id) const
 	return found == field_by_id_.end() ? nullptr : &fields_[found->second];
 }
 
+std::vector<uint64_t> JavaWorld::declaredMethods(uint64_t class_object) const
+{
+	std::vector<uint64_t> ids;
+	const ClassRecord *klass = classRecord(class_object);
+	if (klass == nullptr)
+	{
+		return ids;
+	}
+	ids.reserve(klass->methods.size());
+	for (const auto &entry : klass->methods)
+	{
+		ids.push_back(methods_[entry.second].id);
+	}
+	return ids;
+}
+
+std::vector<uint64_t> JavaWorld::declaredFields(uint64_t class_object) const
+{
+	std::vector<uint64_t> ids;
+	const ClassRecord *klass = classRecord(class_object);
+	if (klass == nullptr)
+	{
+		return ids;
+	}
+	ids.reserve(klass->fields.size());
+	for (const auto &entry : klass->fields)
+	{
+		ids.push_back(fields_[entry.second].id);
+	}
+	return ids;
+}
+
 std::string_view JavaWorld::descriptorOfClass(uint64_t class_object) const
 {
 	const ClassRecord *klass = classRecord(class_object);
