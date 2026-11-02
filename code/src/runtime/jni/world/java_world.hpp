@@ -135,6 +135,12 @@ class JavaWorld
 	// Returns the class object address, or 0 when the descriptor was never
 	// declared.
 	[[nodiscard]] uint64_t findClass(std::string_view descriptor) const;
+	// JNI FindClass reaches array types this way: returns the declared array
+	// class, creating it on demand ("[B", "[Ljava/lang/Object;", "[[I").
+	// Primitive arrays always resolve; an object array requires its element
+	// class to be declared. A malformed descriptor or an unknown element class
+	// is NotFound.
+	Result<uint64_t> findArrayClass(std::string_view descriptor);
 	// Returns the method id, or 0. Searches the class and its superclasses.
 	[[nodiscard]] uint64_t findMethod(uint64_t class_object,
 		std::string_view name,
@@ -164,8 +170,8 @@ class JavaWorld
 
 	// -- Arrays --------------------------------------------------------------
 	// Arrays are values, not declared types: their class ("[B",
-	// "[Ljava/lang/Object;") is created on demand and is deliberately not
-	// reachable through FindClass. Element storage lives in the JNI arena.
+	// "[Ljava/lang/Object;") is created on demand. JNI FindClass can reach it
+	// through findArrayClass() above. Element storage lives in the JNI arena.
 	// |initial_element| pre-fills object arrays; 0 leaves them null.
 	Result<uint64_t> newArray(ArrayElementKind kind,
 		uint64_t length,

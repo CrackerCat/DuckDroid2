@@ -99,6 +99,56 @@ Result<void> installClass(JavaWorld &world)
 		});
 }
 
+// java.lang.ClassLoader: the managed class loader chain. Targets that load a
+// plugin dex through a PathClassLoader ask the Java side for the loader and
+// then call findClass on it. The engine models classes itself, so the loader
+// only has to exist, be stable across calls, and resolve a dotted name to the
+// declared class object (unknown names stay 0, never a synthetic class).
+Result<void> installClassLoader(JavaWorld &world)
+{
+	auto declared = world.declareClass("java/lang/ClassLoader", "java/lang/Object");
+	if (!declared.ok())
+	{
+		return declared.error();
+	}
+	const uint64_t klass = declared.value();
+
+	auto result = declare(world, klass, "<init>", "()V", false,
+		[](JavaWorld &, InvokeContext &) -> Result<uint64_t> { return uint64_t{ 0 }; });
+	if (!result.ok())
+	{
+		return result;
+	}
+	// A boot-class loader's parent is null; targets only call getParent to
+	// walk the chain and stop at the end.
+	result = declare(world, klass, "getParent", "()Ljava/lang/ClassLoader;", false,
+		[](JavaWorld &, InvokeContext &) -> Result<uint64_t> { return uint64_t{ 0 }; });
+	if (!result.ok())
+	{
+		return result;
+	}
+	return declare(world, klass, "findClass", "(Ljava/lang/String;)Ljava/lang/Class;",
+		false, [](JavaWorld &java, InvokeContext &call) -> Result<uint64_t> {
+			if (call.args.empty() || call.args[0] == 0)
+			{
+				return uint64_t{ 0 };
+			}
+			auto name = java.stringUtf8(call.args[0]);
+			if (!name.ok())
+			{
+				return name.error();
+			}
+			for (char &character : name.value())
+			{
+				if (character == '.')
+				{
+					character = '/';
+				}
+			}
+			return java.findClass(name.value());
+		});
+}
+
 Result<void> installString(JavaWorld &world)
 {
 	auto declared = world.declareClass("java/lang/String", "java/lang/Object");
@@ -345,6 +395,107 @@ Result<void> installThread(JavaWorld &world)
 	}
 	const uint64_t element_class = element.value();
 
+	// StackTraceElement is a plain value holder; the platform's own trace is
+	// empty, but targets resolve (and call) these members on elements they
+	// receive from elsewhere.
+	uint64_t class_name_field = 0;
+	uint64_t method_name_field = 0;
+	uint64_t file_name_field = 0;
+	uint64_t line_number_field = 0;
+	const auto declare_element_field = [&world, element_class](const char *name,
+							       const char *signature,
+							       uint64_t *slot) -> Result<void> {
+		auto field = world.declareField(element_class, name, signature, false);
+		if (!field.ok())
+		{
+			return field.error();
+		}
+		*slot = field.value();
+		return {};
+	};
+	auto element_field = declare_element_field("className", "Ljava/lang/String;",
+		&class_name_field);
+	if (!element_field.ok())
+	{
+		return element_field;
+	}
+	element_field = declare_element_field("methodName", "Ljava/lang/String;",
+		&method_name_field);
+	if (!element_field.ok())
+	{
+		return element_field;
+	}
+	element_field = declare_element_field("fileName", "Ljava/lang/String;",
+		&file_name_field);
+	if (!element_field.ok())
+	{
+		return element_field;
+	}
+	element_field = declare_element_field("lineNumber", "I", &line_number_field);
+	if (!element_field.ok())
+	{
+		return element_field;
+	}
+	auto element_result = declare(world, element_class, "<init>", "()V", false,
+		[](JavaWorld &, InvokeContext &) -> Result<uint64_t> { return uint64_t{ 0 }; });
+	if (!element_result.ok())
+	{
+		return element_result;
+	}
+	const auto string_field_getter = [](uint64_t field) {
+		return [field](JavaWorld &java, InvokeContext &call) -> Result<uint64_t> {
+			return java.readInstanceField(call.receiver, field);
+		};
+	};
+	for (const auto &getter : { std::make_pair("getClassName", class_name_field),
+		     std::make_pair("getMethodName", method_name_field),
+		     std::make_pair("getFileName", file_name_field) })
+	{
+		element_result = declare(world, element_class, getter.first,
+			"()Ljava/lang/String;", false, string_field_getter(getter.second));
+		if (!element_result.ok())
+		{
+			return element_result;
+		}
+	}
+	element_result = declare(world, element_class, "getLineNumber", "()I", false,
+		[line_number_field](JavaWorld &java, InvokeContext &call) -> Result<uint64_t> {
+			return java.readInstanceField(call.receiver, line_number_field);
+		});
+	if (!element_result.ok())
+	{
+		return element_result;
+	}
+	element_result = declare(world, element_class, "toString", "()Ljava/lang/String;", false,
+		[class_name_field, method_name_field, file_name_field, line_number_field](
+			JavaWorld &java, InvokeContext &call) -> Result<uint64_t> {
+			auto class_name = java.readInstanceField(call.receiver, class_name_field);
+			auto method_name = java.readInstanceField(call.receiver, method_name_field);
+			auto file_name = java.readInstanceField(call.receiver, file_name_field);
+			auto line_number = java.readInstanceField(call.receiver, line_number_field);
+			if (!class_name.ok() || !method_name.ok() || !file_name.ok() ||
+				!line_number.ok())
+			{
+				return Error{ ErrorCode::Internal, "StackTraceElement is incomplete" };
+			}
+			auto text = [&java](uint64_t object) -> std::string {
+				if (object == 0)
+				{
+					return {};
+				}
+				auto value = java.stringUtf8(object);
+				return value.ok() ? value.value() : std::string{};
+			};
+			const std::string rendered = text(class_name.value()) + "." +
+				text(method_name.value()) + "(" + text(file_name.value()) + ":" +
+				std::to_string(static_cast<int32_t>(line_number.value())) + ")";
+			return java.newString(rendered);
+		});
+	if (!element_result.ok())
+	{
+		return element_result;
+	}
+
 	auto thread = world.allocateObject(klass);
 	if (!thread.ok())
 	{
@@ -584,6 +735,131 @@ Result<void> installInteger(JavaWorld &world)
 		});
 }
 
+// Float and Double carry the raw IEEE bits in the same `value` field the real
+// classes use. SecurityGuard resolves java.lang.Float during JNI_OnLoad and
+// reads it back through floatValue().
+Result<void> installFloat(JavaWorld &world)
+{
+	auto declared = world.declareClass("java/lang/Float", "java/lang/Number");
+	if (!declared.ok())
+	{
+		return declared.error();
+	}
+	const uint64_t klass = declared.value();
+	auto value = world.declareField(klass, "value", "F", false);
+	if (!value.ok())
+	{
+		return value.error();
+	}
+	const uint64_t value_field = value.value();
+
+	auto result = declare(world, klass, "<init>", "(F)V", false,
+		[value_field](JavaWorld &java, InvokeContext &call) -> Result<uint64_t> {
+			if (call.args.size() != 1)
+			{
+				return Error{ ErrorCode::InvalidArgument, "Float.<init> expects one float" };
+			}
+			auto written = java.writeInstanceField(call.receiver, value_field, call.args[0]);
+			if (!written.ok())
+			{
+				return written.error();
+			}
+			return uint64_t{ 0 };
+		});
+	if (!result.ok())
+	{
+		return result;
+	}
+	result = declare(world, klass, "valueOf", "(F)Ljava/lang/Float;", true,
+		[klass, value_field](JavaWorld &java, InvokeContext &call) -> Result<uint64_t> {
+			if (call.args.size() != 1)
+			{
+				return Error{ ErrorCode::InvalidArgument, "Float.valueOf expects one float" };
+			}
+			auto object = java.allocateObject(klass);
+			if (!object.ok())
+			{
+				return object.error();
+			}
+			auto written =
+				java.writeInstanceField(object.value(), value_field, call.args[0]);
+			if (!written.ok())
+			{
+				return written.error();
+			}
+			return object.value();
+		});
+	if (!result.ok())
+	{
+		return result;
+	}
+	return declare(world, klass, "floatValue", "()F", false,
+		[value_field](JavaWorld &java, InvokeContext &call) -> Result<uint64_t> {
+			return java.readInstanceField(call.receiver, value_field);
+		});
+}
+
+Result<void> installDouble(JavaWorld &world)
+{
+	auto declared = world.declareClass("java/lang/Double", "java/lang/Number");
+	if (!declared.ok())
+	{
+		return declared.error();
+	}
+	const uint64_t klass = declared.value();
+	auto value = world.declareField(klass, "value", "D", false);
+	if (!value.ok())
+	{
+		return value.error();
+	}
+	const uint64_t value_field = value.value();
+
+	auto result = declare(world, klass, "<init>", "(D)V", false,
+		[value_field](JavaWorld &java, InvokeContext &call) -> Result<uint64_t> {
+			if (call.args.size() != 1)
+			{
+				return Error{ ErrorCode::InvalidArgument, "Double.<init> expects one double" };
+			}
+			auto written = java.writeInstanceField(call.receiver, value_field, call.args[0]);
+			if (!written.ok())
+			{
+				return written.error();
+			}
+			return uint64_t{ 0 };
+		});
+	if (!result.ok())
+	{
+		return result;
+	}
+	result = declare(world, klass, "valueOf", "(D)Ljava/lang/Double;", true,
+		[klass, value_field](JavaWorld &java, InvokeContext &call) -> Result<uint64_t> {
+			if (call.args.size() != 1)
+			{
+				return Error{ ErrorCode::InvalidArgument, "Double.valueOf expects one double" };
+			}
+			auto object = java.allocateObject(klass);
+			if (!object.ok())
+			{
+				return object.error();
+			}
+			auto written =
+				java.writeInstanceField(object.value(), value_field, call.args[0]);
+			if (!written.ok())
+			{
+				return written.error();
+			}
+			return object.value();
+		});
+	if (!result.ok())
+	{
+		return result;
+	}
+	return declare(world, klass, "doubleValue", "()D", false,
+		[value_field](JavaWorld &java, InvokeContext &call) -> Result<uint64_t> {
+			return java.readInstanceField(call.receiver, value_field);
+		});
+}
+
 } // namespace
 
 Result<int32_t> integerValue(JavaWorld &world, uint64_t object)
@@ -646,6 +922,7 @@ Result<void> installJavaLang(JavaWorld &world)
 	const auto installers = {
 		installObject,
 		installClass,
+		installClassLoader,
 		installString,
 		installSystem,
 		installThread,
@@ -653,6 +930,8 @@ Result<void> installJavaLang(JavaWorld &world)
 		installInteger,
 		installBoolean,
 		installLong,
+		installFloat,
+		installDouble,
 	};
 	for (const auto installer : installers)
 	{

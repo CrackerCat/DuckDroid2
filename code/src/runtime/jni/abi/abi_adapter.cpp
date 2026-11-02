@@ -27,6 +27,7 @@ static_assert(sizeof(Aarch64VaList) == 32, "AAPCS64 va_list layout");
 
 Result<std::vector<uint64_t> > readCallArguments(const MethodSignature &signature,
 	const std::array<uint64_t, 8> &registers,
+	uint64_t sp,
 	CallVariant variant,
 	RuntimeMemory &memory)
 {
@@ -109,17 +110,37 @@ Result<std::vector<uint64_t> > readCallArguments(const MethodSignature &signatur
 		return args;
 	}
 
-	// Plain variadic: env, receiver/class and methodID occupy x0..x2.
+	// Plain variadic: env, receiver/class and methodID occupy x0..x2. Up to
+	// five arguments fit in x3..x7; the rest live in 8-byte slots at the
+	// guest SP, in declaration order.
 	constexpr size_t kFirstArgumentRegister = 3;
 	constexpr size_t kRegisterArgumentCount = 8 - kFirstArgumentRegister;
-	if (signature.args.size() > kRegisterArgumentCount)
-	{
-		return Error{ ErrorCode::Unsupported,
-			"Call<Type>Method with more than five arguments (guest stack arguments) is not implemented" };
-	}
 	for (size_t index = 0; index < signature.args.size(); ++index)
 	{
-		args.push_back(registers[kFirstArgumentRegister + index]);
+		const ValueKind kind = signature.args[index];
+		if (kind == ValueKind::Float || kind == ValueKind::Double)
+		{
+			return Error{ ErrorCode::Unsupported,
+				"Call<Type>Method with floating-point arguments is not implemented" };
+		}
+		if (index < kRegisterArgumentCount)
+		{
+			args.push_back(registers[kFirstArgumentRegister + index]);
+			continue;
+		}
+		if (sp == 0)
+		{
+			return Error{ ErrorCode::Unsupported,
+				"Call<Type>Method stack arguments need a guest stack pointer" };
+		}
+		const uint64_t address = sp + (index - kRegisterArgumentCount) * sizeof(uint64_t);
+		uint64_t value = 0;
+		auto loaded = memory.read(GuestVA{ address }, &value, sizeof(value));
+		if (!loaded.ok())
+		{
+			return loaded.error();
+		}
+		args.push_back(value);
 	}
 	return args;
 }

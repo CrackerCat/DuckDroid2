@@ -30,11 +30,13 @@ enum class CallVariant : uint8_t
 };
 
 // Reads the call arguments in declaration order. Object arguments stay JNI
-// handles; the caller resolves them to object addresses. Unsupported shapes
-// (guest stack arguments, va_list) return ErrorCode::Unsupported instead of
-// guessing a value.
+// handles; the caller resolves them to object addresses. Arguments beyond the
+// five that fit in x3..x7 are read from the guest stack at `sp`. Floating-point
+// arguments are not implemented and report ErrorCode::Unsupported instead of a
+// guessed value.
 Result<std::vector<uint64_t> > readCallArguments(const MethodSignature &signature,
 	const std::array<uint64_t, 8> &registers,
+	uint64_t sp,
 	CallVariant variant,
 	RuntimeMemory &memory);
 

@@ -349,9 +349,14 @@ void JniState::publishMissing(observer::JniEventKind kind,
 	events_->publishJni(std::move(event));
 }
 
-void JniState::publishUnsupported(uint32_t slot, uint32_t tid)
+void JniState::publishUnsupported(uint32_t slot,
+	uint32_t tid,
+	std::string class_descriptor,
+	std::string name,
+	std::string signature)
 {
-	publishMissing(observer::JniEventKind::UnsupportedFunction, {}, {}, {}, slot, tid);
+	publishMissing(observer::JniEventKind::UnsupportedFunction, std::move(class_descriptor),
+		std::move(name), std::move(signature), slot, tid);
 }
 
 int64_t JniState::invokeEnv(uint32_t slot, HostCallArgs &args)
@@ -385,12 +390,17 @@ int64_t JniState::invokeEnv(uint32_t slot, HostCallArgs &args)
 			publishMissing(observer::JniEventKind::MissingClass, {}, {}, {}, slot, tid);
 			return 0;
 		}
-		if (!name.value().empty() && name.value().front() == '[')
+		uint64_t klass = world_->findClass(name.value());
+		if (klass == 0 && !name.value().empty() && name.value().front() == '[')
 		{
-			publishUnsupported(slot, tid);
-			return 0;
+			// Array classes are values, not pack declarations; JNI FindClass
+			// is the one place that creates them on demand.
+			auto array = world_->findArrayClass(name.value());
+			if (array.ok())
+			{
+				klass = array.value();
+			}
 		}
-		const uint64_t klass = world_->findClass(name.value());
 		if (klass == 0)
 		{
 			publishMissing(observer::JniEventKind::MissingClass, name.value(), {}, {}, slot, tid);
@@ -749,37 +759,52 @@ int64_t JniState::invokeEnv(uint32_t slot, HostCallArgs &args)
 
 int64_t JniState::callMethod(uint32_t slot, HostCallArgs &args)
 {
+	// args.x[2] is the method id for every call slot. Looking it up early lets
+	// an unsupported event name the method instead of only the slot number.
+	const MethodRecord *record = world_->method(args.x[2]);
+	const auto reject = [this, slot, &args, record]() {
+		if (record == nullptr)
+		{
+			publishUnsupported(slot, args.tid);
+			return;
+		}
+		publishUnsupported(slot, args.tid,
+			std::string(world_->descriptorOfClass(record->class_object)), record->name,
+			record->signature);
+	};
+
 	const uint32_t nonvirtual_base = JniSlotCallNonvirtualObjectMethod;
 	if (slot >= nonvirtual_base && slot < nonvirtual_base + kCallGroupSize)
 	{
-		publishUnsupported(slot, args.tid);
+		reject();
 		return 0;
 	}
 
 	const CallSlot decoded = decodeCallSlot(slot);
 	if (!decoded.valid)
 	{
-		publishUnsupported(slot, args.tid);
+		reject();
 		return 0;
 	}
 	if (decoded.result == ValueKind::Float || decoded.result == ValueKind::Double)
 	{
 		// The adapter does not return floating-point results in v0.
-		publishUnsupported(slot, args.tid);
+		reject();
 		return 0;
 	}
 
-	const MethodRecord *record = world_->method(args.x[2]);
 	if (record == nullptr || record->is_static != decoded.is_static || record->parsed.result != decoded.result)
 	{
 		publishMissing(observer::JniEventKind::MissingMethod, {}, {}, {}, slot, args.tid);
 		return 0;
 	}
 
-	auto raw_args = readCallArguments(record->parsed, args.x, decoded.variant, memory_);
+	auto raw_args = readCallArguments(record->parsed, args.x, args.sp, decoded.variant, memory_);
 	if (!raw_args.ok())
 	{
-		publishUnsupported(slot, args.tid);
+		// The method exists and matches the slot; the argument shape does not
+		// fit the plain/va_list/array reader yet.
+		reject();
 		return 0;
 	}
 
@@ -805,7 +830,7 @@ int64_t JniState::callMethod(uint32_t slot, HostCallArgs &args)
 	{
 		if (!args.call_guest)
 		{
-			publishUnsupported(slot, args.tid);
+			reject();
 			return 0;
 		}
 		auto env = ensureEnvSlot(args.thread_pointer);
@@ -929,7 +954,7 @@ int64_t JniState::newObject(uint32_t slot, HostCallArgs &args)
 	const CallVariant variant = slot == JniSlotNewObjectV
 					    ? CallVariant::VaList
 					    : (slot == JniSlotNewObjectA ? CallVariant::Array : CallVariant::Plain);
-	auto raw_args = readCallArguments(record->parsed, args.x, variant, memory_);
+	auto raw_args = readCallArguments(record->parsed, args.x, args.sp, variant, memory_);
 	if (!raw_args.ok())
 	{
 		publishUnsupported(slot, args.tid);

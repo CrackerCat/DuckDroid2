@@ -108,7 +108,14 @@ class JniState
 		std::string signature,
 		uint32_t slot,
 		uint32_t tid);
-	void publishUnsupported(uint32_t slot, uint32_t tid);
+	// An unsupported JNI slot. When the method is known, its class/name/
+	// signature are carried too; that is what makes a `CallStaticIntMethod`
+	// event actionable instead of a bare slot number.
+	void publishUnsupported(uint32_t slot,
+		uint32_t tid,
+		std::string class_descriptor = {},
+		std::string name = {},
+		std::string signature = {});
 
 	RuntimeMemory &memory_;
 	ThunkTable &thunks_;

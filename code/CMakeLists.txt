@@ -128,6 +128,7 @@ add_library(duckemu_runtime STATIC
   src/runtime/jni/envs/java_io.cpp
   src/runtime/jni/envs/java_math.cpp
   src/runtime/jni/envs/java_security.cpp
+  src/runtime/jni/envs/java_util.cpp
   src/runtime/jni/refs/ref_table.cpp
   src/runtime/jni/world/java_world.cpp
   src/runtime/loader/bionic/shared_globals.cpp

@@ -465,6 +465,73 @@ uint64_t JavaWorld::findClass(std::string_view descriptor) const
 	return found == class_by_descriptor_.end() ? 0 : classes_[found->second].object;
 }
 
+Result<uint64_t> JavaWorld::findArrayClass(std::string_view descriptor)
+{
+	if (descriptor.size() < 2 || descriptor.front() != '[')
+	{
+		return Error{ ErrorCode::NotFound,
+			"not an array descriptor: " + std::string(descriptor) };
+	}
+	if (const uint64_t existing = findClass(descriptor); existing != 0)
+	{
+		return existing;
+	}
+
+	// A descriptor is one or more '[' followed by a field type. A malformed
+	// tail is NotFound, never a synthetic class: a target that asks for an
+	// array of a class it never declared must see the same failure it would
+	// see on a device.
+	size_t index = 0;
+	while (index < descriptor.size() && descriptor[index] == '[')
+	{
+		++index;
+	}
+	if (index == descriptor.size())
+	{
+		return Error{ ErrorCode::NotFound,
+			"array descriptor has no element type: " + std::string(descriptor) };
+	}
+	const char tag = descriptor[index];
+	if (tag == 'L')
+	{
+		if (descriptor.back() != ';' || descriptor.size() < index + 3)
+		{
+			return Error{ ErrorCode::NotFound,
+				"malformed object array descriptor: " + std::string(descriptor) };
+		}
+		const std::string_view element = descriptor.substr(index);
+		const std::string_view element_class = element.substr(1, element.size() - 2);
+		if (findClass(element_class) == 0)
+		{
+			return Error{ ErrorCode::NotFound,
+				"array element class is not declared: " + std::string(element_class) };
+		}
+	}
+	else if (std::strchr("ZBCSIJFD", tag) == nullptr || index + 1 != descriptor.size())
+	{
+		return Error{ ErrorCode::NotFound,
+			"malformed array descriptor: " + std::string(descriptor) };
+	}
+
+	// Multi-dimensional arrays name an element that is itself an array class;
+	// create the inner class first so the chain is complete.
+	if (index > 1)
+	{
+		auto inner = findArrayClass(descriptor.substr(1));
+		if (!inner.ok())
+		{
+			return inner.error();
+		}
+	}
+
+	auto declared = declareClass(descriptor, "java/lang/Object");
+	if (!declared.ok())
+	{
+		return declared.error();
+	}
+	return declared.value();
+}
+
 uint64_t JavaWorld::findMethod(uint64_t class_object,
 	std::string_view name,
 	std::string_view signature,

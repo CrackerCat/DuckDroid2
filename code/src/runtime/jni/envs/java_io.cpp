@@ -116,7 +116,7 @@ Result<void> installFile(JavaWorld &world)
 
 	// Targets build Files from absolute paths (Context.getFilesDir and the
 	// like), so the stored path is what getAbsolutePath answers.
-	return declare(world, klass, "getAbsolutePath", "()Ljava/lang/String;", false,
+	auto result = declare(world, klass, "getAbsolutePath", "()Ljava/lang/String;", false,
 		[path_field](JavaWorld &java, InvokeContext &call) -> Result<uint64_t> {
 			auto stored = java.readInstanceField(call.receiver, path_field);
 			if (!stored.ok())
@@ -129,6 +129,39 @@ Result<void> installFile(JavaWorld &world)
 			}
 			return stored.value();
 		});
+	if (!result.ok())
+	{
+		return result;
+	}
+	for (const char *name : { "getPath", "toString" })
+	{
+		result = declare(world, klass, name, "()Ljava/lang/String;", false,
+			[path_field](JavaWorld &java, InvokeContext &call) -> Result<uint64_t> {
+				auto stored = java.readInstanceField(call.receiver, path_field);
+				if (!stored.ok())
+				{
+					return stored.error();
+				}
+				return stored.value();
+			});
+		if (!result.ok())
+		{
+			return result;
+		}
+	}
+	// The emulated app's data directory always exists and is writable: the
+	// guest VFS is backed by the case root/write-root. Targets that probe a
+	// directory before creating it see the device answer.
+	for (const char *name : { "exists", "isDirectory", "mkdirs", "mkdir", "canRead", "canWrite" })
+	{
+		result = declare(world, klass, name, "()Z", false,
+			[](JavaWorld &, InvokeContext &) -> Result<uint64_t> { return uint64_t{ 1 }; });
+		if (!result.ok())
+		{
+			return result;
+		}
+	}
+	return {};
 }
 
 } // namespace
