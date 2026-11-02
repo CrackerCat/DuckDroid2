@@ -418,9 +418,47 @@ int main(int argc, char **argv)
 		{
 			// 70102 is the mtop signing entry, so the init chain runs first.
 			result = taobao::init(instance);
+			bool tracing = false;
+			if (result.ok() && !trace_path.empty())
+			{
+				// Trace only this call: init() has already run and its
+				// background guest threads are alive, so arm on the registered
+				// native's entry instead of the first in-range instruction.
+				auto entry = instance.lookupRegisteredNative(taobao::kNativeClass,
+					taobao::kNativeMethod,
+					taobao::kNativeSignature);
+				if (!entry.ok())
+				{
+					result = entry.error();
+				}
+				else
+				{
+					std::fprintf(stderr, "70102 entry=0x%llx\n",
+						static_cast<unsigned long long>(entry.value().value()));
+					observer::InsnTraceOptions options;
+					options.directory = trace_path + "/insn";
+					options.begin = range.value().base;
+					options.size = range.value().span;
+					options.stop_at_return = true;
+					options.arm_address = entry.value();
+					auto started = instance.startInsnTrace(options);
+					if (!started.ok())
+					{
+						result = started.error();
+					}
+					else
+					{
+						tracing = true;
+					}
+				}
+			}
 			if (result.ok())
 			{
 				result = taobao::sign70102(instance);
+			}
+			if (tracing)
+			{
+				instance.stopInsnTrace();
 			}
 		}
 		else

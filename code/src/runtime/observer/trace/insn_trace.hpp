@@ -29,11 +29,18 @@ struct InsnTraceOptions
 	GuestVA begin;
 	uint64_t size = 0;
 	uint64_t max_instructions = 0;
-	// QBDI-style nested trace end: arm at the first in-range instruction
-	// (the called function's entry), capture its LR, and stop recording when
-	// the PC reaches that LR. `begin/size` is only the hook coverage (normally
-	// the target module); no function-size guess is involved.
+	// QBDI-style nested trace end: arm at the called function's entry, capture
+	// its LR, and stop recording when the PC reaches that LR. `begin/size` is
+	// only the hook coverage (normally the target module); no function-size
+	// guess is involved.
 	bool stop_at_return = false;
+	// Optional arming address for `stop_at_return`. When non-null, the trace
+	// ignores every in-range instruction until this exact address runs and then
+	// arms on that instruction's engine. This is what keeps a trace window that
+	// starts while other guest threads are alive from arming on a background
+	// thread's first in-range instruction instead of the call being traced.
+	// Normally the registered native's entry ("lookupRegisteredNative").
+	GuestVA arm_address;
 };
 
 // The engine-facing half of the trace. Implemented by the file sink when

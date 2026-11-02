@@ -254,6 +254,11 @@ Result<void> UnicornBackend::installEngineHooks(EngineState &state)
 			return code_hook.error();
 		}
 		state.trace_code_hook = code_hook.value();
+		// Unicorn translates a TB once and keeps it; a previous run (init) may
+		// have cached blocks from this range without the trace hook, so the
+		// first instructions of the traced call would be skipped. Drop the range
+		// so every block is re-translated with the hook attached.
+		state.engine->invalidateCode(GuestVA{ begin }, trace_options_.size);
 		auto memory_hook = state.engine->addMemoryHook(UC_HOOK_MEM_READ | UC_HOOK_MEM_WRITE,
 			&UnicornBackend::onMemoryHook,
 			&state);

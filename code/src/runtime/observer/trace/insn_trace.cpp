@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <string>
@@ -355,12 +356,19 @@ class FileInsnTrace final : public InsnTraceSink
 		, rw_(std::move(rw))
 		, threads_(std::move(threads))
 		, stop_at_return_(options.stop_at_return)
+		, arm_address_(options.arm_address.value())
+		, debug_unarmed_(std::getenv("DUCKEMU_INSN_TRACE_DEBUG") != nullptr)
 	{
 		DUCKEMU_INFO("insn trace: %s+0x%llx size=0x%llx -> %s",
 			module_name_.c_str(),
 			static_cast<unsigned long long>(begin_ - module_base_),
 			static_cast<unsigned long long>(options.size),
 			options.directory.c_str());
+		if (stop_at_return_ && arm_address_ != 0)
+		{
+			DUCKEMU_INFO("insn trace: arming at 0x%llx",
+				static_cast<unsigned long long>(arm_address_));
+		}
 	}
 
 	void onInstruction(void *engine_pointer, uint64_t engine_id, uint32_t tid, uint64_t address) override
@@ -371,8 +379,25 @@ class FileInsnTrace final : public InsnTraceSink
 		{
 			if (!have_armed_engine_)
 			{
-				// The first in-range instruction after startInsnTrace is the
-				// called function's entry.
+				// With an explicit arm address, ignore every other in-range
+				// instruction first. Background guest threads started by init
+				// can reach the module before the host call does; without this
+				// gate the trace would arm on that thread's first instruction.
+				if (arm_address_ != 0 && address != arm_address_)
+				{
+					if (debug_unarmed_ && unarmed_hits_ < 20)
+					{
+						std::fprintf(stderr,
+							"insn trace: unarmed hit engine=%llu tid=%u addr=0x%llx\n",
+							static_cast<unsigned long long>(engine_id),
+							tid,
+							static_cast<unsigned long long>(address));
+					}
+					++unarmed_hits_;
+					return;
+				}
+				// The instruction at the arm address (or the first in-range
+				// instruction when none is set) is the called function's entry.
 				have_armed_engine_ = true;
 				armed_engine_id_ = engine_id;
 				state.armed = true;
@@ -380,6 +405,20 @@ class FileInsnTrace final : public InsnTraceSink
 				(void)uc_reg_read(engine, UC_ARM64_REG_LR, &lr);
 				state.entry_lr = lr;
 				state.have_entry_lr = true;
+				DUCKEMU_INFO("insn trace: armed at 0x%llx (engine=%llu tid=%u lr=0x%llx)",
+					static_cast<unsigned long long>(address),
+					static_cast<unsigned long long>(engine_id),
+					tid,
+					static_cast<unsigned long long>(lr));
+				if (debug_unarmed_)
+				{
+					std::fprintf(stderr,
+						"insn trace: armed at 0x%llx (engine=%llu tid=%u lr=0x%llx)\n",
+						static_cast<unsigned long long>(address),
+						static_cast<unsigned long long>(engine_id),
+						tid,
+						static_cast<unsigned long long>(lr));
+				}
 			}
 			else if (engine_id != armed_engine_id_)
 			{
@@ -690,8 +729,11 @@ class FileInsnTrace final : public InsnTraceSink
 	std::unordered_map<uint64_t, PendingInstruction> pending_;
 	std::unordered_map<uint64_t, EngineTraceState> states_;
 	bool stop_at_return_ = false;
+	uint64_t arm_address_ = 0;
 	bool have_armed_engine_ = false;
 	uint64_t armed_engine_id_ = 0;
+	bool debug_unarmed_ = false;
+	uint64_t unarmed_hits_ = 0;
 };
 
 } // namespace
@@ -721,8 +763,16 @@ Result<std::unique_ptr<InsnTraceSink> > createInsnTrace(
 		return Error{ ErrorCode::InvalidArgument, "insn trace range overflows" };
 	}
 	const uint64_t clean_end = clean_begin + options.size;
+	const uint64_t arm_address = untagAddress(options.arm_address.value());
+	if (options.stop_at_return && arm_address != 0 &&
+		(arm_address < clean_begin || arm_address >= clean_end))
+	{
+		return Error{ ErrorCode::InvalidArgument,
+			"insn trace arm address is outside the trace range" };
+	}
 	InsnTraceOptions effective = options;
 	effective.begin = GuestVA{ clean_begin };
+	effective.arm_address = GuestVA{ arm_address };
 	uint64_t region_base = 0;
 	std::string region_name;
 	const loader::Module *module = modules.findContaining(clean_begin);
